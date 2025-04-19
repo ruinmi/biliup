@@ -115,6 +115,7 @@ def process_upload(stream_info):
                     # 上传延迟检测，启用的话会在一段时间后检测是否存在下载任务，若存在则跳过本次上传
                     return logger.info(f'{name} -> {url} 存在下载任务, 跳过本次上传')
 
+        stream_info['title'] = get_room_title(name)
         if ("title" not in stream_info) or (not stream_info["title"]):  # 如果 data 中不存在标题, 说明下载信息已丢失, 则尝试从数据库获取
             with SessionLocal() as db:
                 i = 0
@@ -137,6 +138,20 @@ def process_upload(stream_info):
         with NamedLock(f'upload_count_{url}'):
             url_upload_count[url] -= 1
 
+def get_room_title(name):
+    # 执行命令并获取输出
+    result = subprocess.run(
+        ['python3', 'add_stream.py', 'get', name],
+        capture_output=True,
+        text=True
+    )
+
+    # 解析JSON
+    try:
+        data = json.loads(result.stdout)
+        return data.get("room_title")
+    except json.JSONDecodeError:
+        return None
 
 def uploaded(name, live_cover_path, data: List):
     # data = file_list

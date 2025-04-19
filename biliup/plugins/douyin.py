@@ -2,6 +2,7 @@ import json
 from typing import Optional
 from urllib.parse import unquote, urlparse, parse_qs, urlencode, urlunparse
 
+import httpcore
 import requests
 
 from biliup.common.util import client
@@ -108,6 +109,8 @@ class Douyin(DownloadBase):
                 return False
             self.__room_id = room_info['id_str']
             self.room_title = room_info['title']
+        except httpcore.ConnectTimeout:
+            return False
         except:
             logger.exception(f"{self.plugin_msg}: 获取直播间信息失败")
             return False

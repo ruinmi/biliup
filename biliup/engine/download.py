@@ -104,7 +104,6 @@ class DownloadBase(ABC):
         return True
 
     def download(self):
-        logger.info(f"{self.plugin_msg}: Start downloading {self.raw_stream_url}")
         # 调试使用边录边上传功能
         # self.downloader = 'sync-downloader'
         if self.is_download:
