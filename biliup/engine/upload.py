@@ -13,6 +13,7 @@ from biliup.database import models
 from biliup.database.db import SessionLocal
 
 logger = logging.getLogger('biliup')
+logger1 = logging.getLogger('biliup1')
 
 
 class UploadBase:
@@ -76,7 +77,7 @@ class UploadBase:
             threshold = config.get('filtering_threshold', 0)
             if file_size <= threshold:
                 os.remove(file)
-                logger.info(f'过滤删除 - {file}')
+                logger1.info(f'过滤删除 - {file}', extra={'streamer': index})
                 continue
 
             video = file
@@ -112,10 +113,10 @@ class UploadBase:
                 UploadBase.remove_file(f.danmaku)
 
     @staticmethod
-    def remove_file(file: str):
+    def remove_file(file: str, streamer: str):
         try:
             os.remove(file)
-            logger.info(f'删除 - {file}')
+            logger1.info(f'删除 - {file}', extra={'streamer': streamer})
         except:
             logger.warning(f'删除失败 - {file}')
 
@@ -134,7 +135,7 @@ class UploadBase:
             if len(file_list) > 0:
                 upload_filename_list = [os.path.splitext(file.video)[0] for file in file_list]
 
-                logger.info('准备上传' + self.data["format_title"])
+                logger1.info('准备上传' + self.data["format_title"], extra={'streamer': self.principal})
                 with NamedLock('upload_filename'):
                     event_manager.context['upload_filename'].extend(upload_filename_list)
                 lock.release()

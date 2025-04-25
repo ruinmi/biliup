@@ -110,7 +110,7 @@ class Douyin(DownloadBase):
                 return False
             self.__room_id = room_info['id_str']
             self.room_title = room_info['title']
-        except (httpx.TimeoutException, httpcore.TimeoutException):
+        except (httpx.TimeoutException, httpcore.TimeoutException, httpcore.RemoteProtocolError, httpx.RemoteProtocolError):
             return False
         except:
             logger.exception(f"{self.plugin_msg}: 获取直播间信息失败")

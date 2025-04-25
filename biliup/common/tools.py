@@ -2,6 +2,7 @@ import logging
 import subprocess
 
 logger = logging.getLogger('biliup')
+logger1 = logging.getLogger('biliup1')
 
 
 class NamedLock:
@@ -68,7 +69,7 @@ def processor(processors, data):
                     process['run'], shell=True,
                     input=data,
                     stderr=subprocess.STDOUT, text=True)
-                logger.info(process_output.rstrip())
+                logger1.info(process_output.rstrip(), extra={'streamer': data['name']})
             except subprocess.CalledProcessError as e:
                 logger.exception(e.output)
                 continue

@@ -24,6 +24,7 @@ DOWNLOADED = 'downloaded'
 UPLOAD = 'upload'
 UPLOADED = 'uploaded'
 logger = logging.getLogger('biliup')
+logger1 = logging.getLogger('biliup1')
 
 
 # @event_manager.register(CHECK, block='Asynchronous3')
@@ -36,7 +37,7 @@ def pre_processor(name, url):
         logger.debug(f"{name} - {url} 正在下载中，跳过下载")
         return
 
-    logger.debug(f"{name} - {url} 开播了准备下载")
+    logger1.debug(f"{name} - {url} 开播了准备下载", extra={'streamer': name})
     preprocessor = config['streamers'].get(name, {}).get('preprocessor')
     if preprocessor:
         processor(preprocessor, json.dumps({
@@ -109,11 +110,11 @@ def process_upload(stream_info):
         if url_status[url] != 2:
             delay = int(config.get('delay', 0))
             if delay:
-                logger.info(f'{name} -> {url} {delay}s 后检测是否上传')
+                logger1.info(f'{name} -> {url} {delay}s 后检测是否上传', extra={'streamer': name})
                 time.sleep(delay)
                 if url_status[url] == 1:
                     # 上传延迟检测，启用的话会在一段时间后检测是否存在下载任务，若存在则跳过本次上传
-                    return logger.info(f'{name} -> {url} 存在下载任务, 跳过本次上传')
+                    return logger1.info(f'{name} -> {url} 存在下载任务, 跳过本次上传', extra={'streamer': name})
 
         stream_info['title'] = get_room_title(name)
         if ("title" not in stream_info) or (not stream_info["title"]):  # 如果 data 中不存在标题, 说明下载信息已丢失, 则尝试从数据库获取
@@ -194,14 +195,14 @@ def uploaded(name, live_cover_path, data: List):
                 except Exception as e:
                     logger.exception(e)
                     continue
-                logger.info(f"move to {(dest / path.name).absolute()}")
+                logger1.info(f"move to {(dest / path.name).absolute()}", extra={'streamer': name})
         if post_processor.get('run'):
             try:
                 process_output = subprocess.check_output(
                     post_processor['run'], shell=True,
                     input=reduce(lambda x, y: x + str(Path(y).absolute()) + '\n', file_list, ''),
                     stderr=subprocess.STDOUT, text=True)
-                logger.info(process_output.rstrip())
+                logger1.info(process_output.rstrip(), extra={'streamer': name})
             except subprocess.CalledProcessError as e:
-                logger.exception(e.output)
+                logger1.exception(e.output, extra={'streamer': name})
                 continue
