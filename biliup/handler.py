@@ -160,8 +160,8 @@ def uploaded(name, live_cover_path, data: List):
     if post_processor is None:
         # 删除封面
         if live_cover_path is not None:
-            UploadBase.remove_file(live_cover_path)
-        return UploadBase.remove_filelist(data)
+            UploadBase.remove_file(live_cover_path, name)
+        return UploadBase.remove_filelist(data, name)
 
     file_list = []
     for i in data:
@@ -181,8 +181,8 @@ def uploaded(name, live_cover_path, data: List):
             ):
             # 删除封面
             if live_cover_path is not None:
-                UploadBase.remove_file(live_cover_path)
-            UploadBase.remove_filelist(data)
+                UploadBase.remove_file(live_cover_path, name)
+            UploadBase.remove_filelist(data, name)
             continue
         if post_processor.get('mv'):
             for file in file_list:

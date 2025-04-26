@@ -102,15 +102,15 @@ class UploadBase:
                         break
                 if not have_video:
                     logger.info(f'无视频，过滤删除 - {file}')
-                    UploadBase.remove_file(file)
+                    UploadBase.remove_file(file, index)
         return results
 
     @staticmethod
-    def remove_filelist(file_list: List[FileInfo]):
+    def remove_filelist(file_list: List[FileInfo], steamer: str):
         for f in file_list:
-            UploadBase.remove_file(f.video)
+            UploadBase.remove_file(f.video, steamer)
             if f.danmaku is not None:
-                UploadBase.remove_file(f.danmaku)
+                UploadBase.remove_file(f.danmaku, steamer)
 
     @staticmethod
     def remove_file(file: str, streamer: str):
