@@ -61,7 +61,7 @@ def get_file_create_timestamp(file: str) -> float:
     return stat_result.st_mtime
 
 
-def processor(processors, data):
+def processor(processors, data, streamer: str):
     for process in processors:
         if process.get('run'):
             try:
@@ -69,7 +69,7 @@ def processor(processors, data):
                     process['run'], shell=True,
                     input=data,
                     stderr=subprocess.STDOUT, text=True)
-                logger1.info(process_output.rstrip(), extra={'streamer': data['name']})
+                logger1.info(process_output.rstrip(), extra={'streamer': streamer})
             except subprocess.CalledProcessError as e:
                 logger.exception(e.output)
                 continue

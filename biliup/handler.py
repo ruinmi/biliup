@@ -44,7 +44,7 @@ def pre_processor(name, url):
             "name": name,
             "url": url,
             "start_time": int(time.time())
-        }, ensure_ascii=False))
+        }, ensure_ascii=False), name)
     yield Event(DOWNLOAD, (name, url))
 
 
@@ -79,7 +79,7 @@ def processed(stream_info):
             "start_time": int(time.mktime(stream_info.get('date', default_date))),
             "end_time": int(time.mktime(stream_info.get('end_time', default_date))),
             "file_list": [file.video for file in file_list]
-        }, ensure_ascii=False))
+        }, ensure_ascii=False), name)
         # 后处理完成后重新扫描文件列表
     yield Event(UPLOAD, (stream_info,))
 

@@ -311,7 +311,7 @@ class DownloadBase(ABC):
                     data = os.path.abspath(file_name)
                     if os.path.exists(danmaku_file_name):
                         data += f'\n{os.path.abspath(danmaku_file_name)}'
-                    processor(self.segment_processor, data)
+                    processor(self.segment_processor, data, self.fname)
                 except:
                     logger.warning(f'{self.plugin_msg}: 执行后处理失败', exc_info=True)
 
