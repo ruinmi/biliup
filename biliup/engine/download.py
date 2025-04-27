@@ -96,7 +96,6 @@ class DownloadBase(ABC):
         # 检查房间名
         keywords = config['streamers'].get(self.fname, {}).get('excluded_keywords')
         if self.room_title and keywords:
-            logger1.warning(f'-----CHECK ROOM_TITLE-- {self.room_title}', extra={'streamer': self.fname})
             if any(k.strip() in self.room_title for k in keywords):
                 return False
 
