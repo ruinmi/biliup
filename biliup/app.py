@@ -8,7 +8,6 @@ from biliup.engine import Plugin, invert_dict
 from biliup.engine.event import EventManager, Event
 from .common.timer import Timer
 from .common.tools import NamedLock
-from .downloader import stop_download
 
 logger = logging.getLogger('biliup')
 
@@ -53,7 +52,24 @@ async def singleton_check(platform, name, url):
     else:
         # Check if there is an ongoing download and stop it
         stop_download(name, url)
-        
+
+def stop_download(name, url):
+    url_status = context['PluginInfo'].url_status
+
+    # Try to safely stop any download associated with the URL
+    if url_status[url] == 1:
+        logger.info(f"尝试停止下载 {name} - {url}")
+
+        # Check if there's an ongoing download in the map
+        download_proc = context["sync_downloader_map"].get(name)
+        if download_proc:
+            try:
+                download_proc.terminate()  # Send termination signal to the FFmpeg process
+                download_proc.wait()  # Wait for the process to terminate
+                logger.info(f"Download process for {name} - {url} has been stopped.")
+            except Exception as e:
+                logger.error(f"Error while stopping the download: {e}")
+                
 async def shot(event):
     index = 0
     while True:
