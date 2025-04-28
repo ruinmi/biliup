@@ -8,6 +8,7 @@ from biliup.engine import Plugin, invert_dict
 from biliup.engine.event import EventManager, Event
 from .common.timer import Timer
 from .common.tools import NamedLock
+from .downloader import stop_download
 
 logger = logging.getLogger('biliup')
 
@@ -37,8 +38,9 @@ context = event_manager.context
 
 async def singleton_check(platform, name, url):
     from biliup.handler import PRE_DOWNLOAD, UPLOAD
+    from biliup.config import config
     context['url_upload_count'].setdefault(url, 0)
-    if context['PluginInfo'].url_status[url] == 1:
+    if context['PluginInfo'].url_status[url] == 1 and not config['streamers'].get(name, {}).get('excluded_keywords'):
         logger.debug(f'{url} 正在下载中，跳过检测')
         return
 
@@ -48,8 +50,10 @@ async def singleton_check(platform, name, url):
         # 需要等待上传文件列表检索完成后才可以开始下次下载
         with NamedLock(f'upload_file_list_{name}'):
             event_manager.send_event(Event(PRE_DOWNLOAD, args=(name, url,)))
-
-
+    else:
+        # Check if there is an ongoing download and stop it
+        stop_download(name, url)
+        
 async def shot(event):
     index = 0
     while True:

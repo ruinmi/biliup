@@ -190,6 +190,7 @@ class DownloadBase(ABC):
         args = ['ffmpeg', *input_args, *output_args, f'{file_name}_%d.{self.suffix}']
         with subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.DEVNULL) as proc:
+            context["sync_downloader_map"][self.fname] = proc
             for line in iter(proc.stdout.readline, b''):  # b'\n'-separated lines
                 try:
                     ffmpeg_file_name = line.rstrip().decode(errors='ignore')

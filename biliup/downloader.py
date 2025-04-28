@@ -3,6 +3,7 @@ import re
 
 from .engine.decorators import Plugin
 from .plugins import general
+from .app import context
 
 logger = logging.getLogger('biliup')
 
@@ -36,6 +37,22 @@ def download(fname, url, **kwargs):
         del override
     return pg.start()
 
+def stop_download(name, url):
+    url_status = context['PluginInfo'].url_status
+
+    # Try to safely stop any download associated with the URL
+    if url_status[url] == 1:
+        logger.info(f"尝试停止下载 {name} - {url}")
+
+        # Check if there's an ongoing download in the map
+        download_proc = context["sync_downloader_map"].get(name)
+        if download_proc:
+            try:
+                download_proc.terminate()  # Send termination signal to the FFmpeg process
+                download_proc.wait()  # Wait for the process to terminate
+                logger.info(f"Download process for {name} - {url} has been stopped.")
+            except Exception as e:
+                logger.error(f"Error while stopping the download: {e}")
 
 def biliup_download(name, url, kwargs: dict):
     kwargs.pop('url')
