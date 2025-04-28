@@ -39,17 +39,18 @@ async def singleton_check(platform, name, url):
     from biliup.handler import PRE_DOWNLOAD, UPLOAD
     from biliup.config import config
     context['url_upload_count'].setdefault(url, 0)
-    if context['PluginInfo'].url_status[url] == 1 and not config['streamers'].get(name, {}).get('excluded_keywords'):
-        logger.debug(f'{url} 正在下载中，跳过检测')
-        return
-
-    event_manager.send_event(Event(UPLOAD, ({'name': name, 'url': url},)))
+    
     p = platform(name, url)
-    if await p.acheck_stream(True) and p.should_record():
-        # 需要等待上传文件列表检索完成后才可以开始下次下载
-        with NamedLock(f'upload_file_list_{name}'):
-            event_manager.send_event(Event(PRE_DOWNLOAD, args=(name, url,)))
-    else:
+    is_live = await p.acheck_stream(True)
+    should_record = p.should_record()
+    
+    if context['PluginInfo'].url_status[url] != 1:
+        event_manager.send_event(Event(UPLOAD, ({'name': name, 'url': url},)))
+        if is_live and should_record:
+            # 需要等待上传文件列表检索完成后才可以开始下次下载
+            with NamedLock(f'upload_file_list_{name}'):
+                event_manager.send_event(Event(PRE_DOWNLOAD, args=(name, url,)))
+    elif config['streamers'].get(name, {}).get('excluded_keywords') and not should_record:
         # Check if there is an ongoing download and stop it
         stop_download(name, url)
 
