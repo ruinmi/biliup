@@ -190,7 +190,6 @@ class DownloadBase(ABC):
         args = ['ffmpeg', *input_args, *output_args, f'{file_name}_%d.{self.suffix}']
         with subprocess.Popen(args, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                               stderr=subprocess.DEVNULL) as proc:
-            context["sync_downloader_map"][self.fname] = proc
             for line in iter(proc.stdout.readline, b''):  # b'\n'-separated lines
                 try:
                     ffmpeg_file_name = line.rstrip().decode(errors='ignore')
@@ -267,6 +266,9 @@ class DownloadBase(ABC):
                     f'{fmt_file_name}.{self.suffix}.part']
             with subprocess.Popen(args, stdin=subprocess.DEVNULL if not streamlink_proc else streamlink_proc.stdout,
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
+                if "downloading_pid" not in context:
+                    context["downloading_pid"] = {}
+                context["downloading_pid"][self.fname] = proc
                 for line in iter(proc.stdout.readline, b''):  # b'\n'-separated lines
                     decode_line = line.rstrip().decode(errors='ignore')
                     print(decode_line)

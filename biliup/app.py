@@ -28,6 +28,9 @@ def create_event_manager():
 
     # 边录边传的下载器使用的map
     app.context['sync_downloader_map'] = {}
+    
+    # 记录正在下载的进程
+    app.context['downloading_pid'] = {}
     return app
 
 
@@ -50,7 +53,7 @@ async def singleton_check(platform, name, url):
             # 需要等待上传文件列表检索完成后才可以开始下次下载
             with NamedLock(f'upload_file_list_{name}'):
                 event_manager.send_event(Event(PRE_DOWNLOAD, args=(name, url,)))
-    elif config['streamers'].get(name, {}).get('excluded_keywords') and not should_record:
+    elif not should_record:
         # Check if there is an ongoing download and stop it
         stop_download(name, url)
 
@@ -62,14 +65,20 @@ def stop_download(name, url):
         logger.info(f"尝试停止下载 {name} - {url}")
 
         # Check if there's an ongoing download in the map
-        download_proc = context["sync_downloader_map"].get(name)
+        download_proc = context["downloading_pid"].pop(name)
         if download_proc:
             try:
-                download_proc.terminate()  # Send termination signal to the FFmpeg process
-                download_proc.wait()  # Wait for the process to terminate
-                logger.info(f"Download process for {name} - {url} has been stopped.")
+                # Check if the process is still running before attempting to terminate
+                if download_proc.poll() is None:
+                    download_proc.terminate()  # Send termination signal to the FFmpeg process
+                    download_proc.wait(timeout=10)  # Wait for the process to terminate
+                else:
+                    logger.info(f"FFmpeg process for {name} - {url} has already terminated.")
             except Exception as e:
                 logger.error(f"Error while stopping the download: {e}")
+        else:
+            logger.error(f"No active download process found for {name} - {url}")
+
                 
 async def shot(event):
     index = 0
