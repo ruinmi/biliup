@@ -10,6 +10,7 @@ from .common.timer import Timer
 from .common.tools import NamedLock
 
 logger = logging.getLogger('biliup')
+logger1 = logging.getLogger('biliup1')
 
 
 def create_event_manager():
@@ -62,7 +63,7 @@ def stop_download(name, url):
 
     # Try to safely stop any download associated with the URL
     if url_status[url] == 1:
-        logger.info(f"尝试停止下载 {name} - {url}")
+        logger1.info(f"尝试停止下载 {name} - {url}", extra={'steamer': name})
 
         # Check if there's an ongoing download in the map
         download_proc = context["downloading_pid"].pop(name)
