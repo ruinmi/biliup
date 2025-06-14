@@ -3,6 +3,7 @@ import hashlib
 import json
 import random
 import time
+import html
 from urllib.parse import parse_qs, unquote
 
 import httpcore
@@ -260,7 +261,7 @@ class Huya(DownloadBase):
                 f"{HUYA_MP_BASE_URL}/cache.php",
                 headers=self.fake_headers, params=params)
             resp.raise_for_status()
-            resp = json_loads(resp.text)
+            resp = json_loads(html.unescape(resp.text))
             if resp['status'] != 200:
                 raise Exception(f"{resp['message']}")
         else:
@@ -268,7 +269,7 @@ class Huya(DownloadBase):
                 f"{HUYA_WEB_BASE_URL}/{self.__room_id}",
                 headers=self.fake_headers)
             resp.raise_for_status()
-            resp = resp.text
+            resp = html.unescape(resp.text)
             _raise_for_room_block(resp)
         return self.extract_room_profile(resp)
 

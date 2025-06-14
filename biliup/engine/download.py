@@ -106,7 +106,7 @@ class DownloadBase(ABC):
 
     def download(self):
         # print(f"{self.plugin_msg}: Plugin settings - {self.__dict__}")
-        logger.info(f"{self.plugin_msg}: Plugin settings - {self.__dict__}")
+        logger.debug(f"{self.plugin_msg}: Plugin settings - {self.__dict__}")
         # logger.info(f"{self.plugin_msg}: Request headers - {self.fake_headers}")
         logger.info(f"{self.plugin_msg}: Request url - {self.raw_stream_url}")
         # 调试使用边录边上传功能
@@ -228,7 +228,9 @@ class DownloadBase(ABC):
                 streamlink_cmd = [
                     'streamlink',
                     '--stream-segment-threads', '3',
-                    '--hls-playlist-reload-attempts', '1'
+                    '--hls-playlist-reload-attempts', '1',
+                    # '--http-proxy', 'http://127.0.0.1:7890',
+                    # '--hls-live-restart',
                 ]
                 for key, value in self.fake_headers.items():
                     streamlink_cmd.extend(['--http-header', f'{key}={value}'])
@@ -374,7 +376,7 @@ class DownloadBase(ABC):
             end_time = time.localtime()
 
         self.download_cover(
-            time.strftime(self.gen_download_filename().encode("unicode-escape").decode(), end_time if end_time else time.localtime()
+            time.strftime(self.gen_download_filename(), end_time if end_time else time.localtime()
                           ).encode().decode("unicode-escape"))
         # 更新数据库中封面存储路径
         with SessionLocal() as db:
@@ -497,9 +499,9 @@ class DownloadBase(ABC):
                 if os.path.exists(f"{fmt_file_name}.{self.suffix}"):
                     file_time += 1
                 else:
-                    return fmt_file_name
-        else:
-            return filename
+                    filename = fmt_file_name
+                    break
+        return filename.encode("unicode-escape").decode()
 
     @staticmethod
     def download_file_rename(old_file_name, file_name, streamer):
@@ -558,8 +560,16 @@ def sync_download(stream_url, headers, segment_duration=60, max_file_size=100, o
         data = {**data, "name": stream_info['name']}
         if "title" not in data:
             data["title"] = stream_info.get("title", "")
-        data, _ = fmt_title_and_desc(data)
+        # 使用 fmt_title_and_desc 生成格式化后的标题和简介
+        # fmt_title_and_desc 返回 (data, context)，其中 context 中包含已格式化的 description
+        data, context_fmt = fmt_title_and_desc(data)
+
+        # 更新基本信息（含 format_title）
         stream_info.update(data)
+
+        # 若存在格式化后的简介，将其写入 stream_info，保证后续上传时使用正确的简介
+        if context_fmt.get('description'):
+            stream_info['description'] = context_fmt['description']
         logger.info(f"stream_info: {stream_info}")
         # 获取 BiliWebAsync.__init__ 的参数名
         init_params = inspect.signature(BiliWebAsync.__init__).parameters
