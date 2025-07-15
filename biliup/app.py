@@ -78,7 +78,7 @@ def stop_download(name, url):
             except Exception as e:
                 logger.error(f"Error while stopping the download: {e}")
         else:
-            logger.error(f"No active download process found for {name} - {url}  : {context["downloading_pid"]}")
+            logger.error(f"No active download process found for {name} - {url}  : {context['downloading_pid']}")
 
                 
 async def shot(event):
