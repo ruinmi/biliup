@@ -96,19 +96,21 @@ class DownloadBase(ABC):
         keywords = config['streamers'].get(self.fname, {}).get('excluded_keywords')
         if self.room_title and keywords:
             if any(k.strip() in self.room_title for k in keywords):
+                if context['PluginInfo'].url_status[self.url] == 1:
+                    logger.info('房间名原因')
                 return False
 
         # 检查时间范围
         if not check_timerange(self.fname):
+            if context['PluginInfo'].url_status[self.url] == 1:
+                logger.info('时间范围原因')
             return False
 
         return True
 
     def download(self):
         # print(f"{self.plugin_msg}: Plugin settings - {self.__dict__}")
-        logger.debug(f"{self.plugin_msg}: Plugin settings - {self.__dict__}")
         # logger.info(f"{self.plugin_msg}: Request headers - {self.fake_headers}")
-        logger.info(f"{self.plugin_msg}: Request url - {self.raw_stream_url}")
         # 调试使用边录边上传功能
         # self.downloader = 'sync-downloader'
         if self.is_download:
@@ -273,6 +275,7 @@ class DownloadBase(ABC):
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
                 if "downloading_pid" not in context:
                     context["downloading_pid"] = {}
+                logger1.info(f'setting pid: {self.fname}')
                 context["downloading_pid"][self.fname] = proc
                 for line in iter(proc.stdout.readline, b''):  # b'\n'-separated lines
                     decode_line = line.rstrip().decode(errors='ignore')
@@ -376,7 +379,7 @@ class DownloadBase(ABC):
             end_time = time.localtime()
 
         self.download_cover(
-            time.strftime(self.gen_download_filename(), end_time if end_time else time.localtime()
+            time.strftime(self.gen_download_filename().encode("unicode-escape").decode(), end_time if end_time else time.localtime()
                           ).encode().decode("unicode-escape"))
         # 更新数据库中封面存储路径
         with SessionLocal() as db:
@@ -499,9 +502,9 @@ class DownloadBase(ABC):
                 if os.path.exists(f"{fmt_file_name}.{self.suffix}"):
                     file_time += 1
                 else:
-                    filename = fmt_file_name
-                    break
-        return filename.encode("unicode-escape").decode()
+                    return fmt_file_name
+        else:
+            return filename
 
     @staticmethod
     def download_file_rename(old_file_name, file_name, streamer):

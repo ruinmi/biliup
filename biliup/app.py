@@ -63,10 +63,10 @@ def stop_download(name, url):
 
     # Try to safely stop any download associated with the URL
     if url_status[url] == 1:
-        logger1.info(f"尝试停止下载 {name} - {url}", extra={'steamer': name})
+        logger1.info(f"尝试停止下载 {name} - {url}", extra={'streamer': name})
 
         # Check if there's an ongoing download in the map
-        download_proc = context["downloading_pid"].pop(name)
+        download_proc = context["downloading_pid"].pop(name, None)
         if download_proc:
             try:
                 # Check if the process is still running before attempting to terminate
@@ -78,7 +78,7 @@ def stop_download(name, url):
             except Exception as e:
                 logger.error(f"Error while stopping the download: {e}")
         else:
-            logger.error(f"No active download process found for {name} - {url}")
+            logger.error(f"No active download process found for {name} - {url}  : {context["downloading_pid"]}")
 
                 
 async def shot(event):
