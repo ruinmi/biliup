@@ -1,7 +1,22 @@
 'use client'
-import {redirect} from "next/navigation";
+import { Layout } from '@douyinfe/semi-ui'
+import { AuthGuard } from './lib/auth-guard'
+import ProtectedLayout from './lib/protected-layout'
 
-export default function Home() {
-  redirect('/streamers');
-  return null; // 不需要渲染内容，重定向会自动发生
-}
+const Home: React.FC = () => (
+  <AuthGuard>
+    <ProtectedLayout>
+      <Layout>
+        <iframe
+          style={{
+            borderWidth: 0,
+          }}
+          height="100%"
+          src="https://biliup.github.io/biliup/docs/guide/changelog/"
+        ></iframe>
+      </Layout>
+    </ProtectedLayout>
+  </AuthGuard>
+)
+
+export default Home
