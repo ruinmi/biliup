@@ -12,7 +12,7 @@ python-packages = ["biliup"]
 manifest-path = "crates/stream-gears/Cargo.toml"
 
 [project]
-name = "biliup"
+name = "biliup-ruinmi"
 readme = "README.md"
 authors = [{ name = "ForgQi" }]
 description = "stream download and upload"
