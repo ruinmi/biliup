@@ -3,7 +3,7 @@ import platform
 import sys
 from importlib.metadata import version
 
-__version__ = version("biliup")
+__version__ = version("biliup-ruinmi")
 
 
 LOG_CONF = {
