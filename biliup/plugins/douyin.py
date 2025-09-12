@@ -206,9 +206,9 @@ class Douyin(DownloadBase):
                 'detail': self.douyin_danmaku_detail,
             }
             
-                self.danmaku = DanmakuClient(self.url, self.gen_download_filename(), content)
-            else:
-                logger.error(f"如需录制抖音弹幕，请至少安装一个 Javascript 解释器。如 pip install quickjs")
+            self.danmaku = DanmakuClient(self.url, self.gen_download_filename(), content)
+        else:
+            logger.error(f"如需录制抖音弹幕，请至少安装一个 Javascript 解释器。如 pip install quickjs")
 
     async def get_web_room_info(self, web_rid: str) -> dict:
         query = {
