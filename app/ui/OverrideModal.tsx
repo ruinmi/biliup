@@ -86,6 +86,10 @@ const OverrideModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
   }
   const handleOk = async () => {
     let values = await api.current?.validate()
+    values = {
+      ...values,
+      time_range: JSON.stringify(values?.time_range?.map((date: Date) => date.toISOString())),
+    }
     // 从 LiveStreamerEntity 接口定义中获取所有字段
     const entityFields = new Set([
       'id',
