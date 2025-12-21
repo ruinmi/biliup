@@ -96,7 +96,8 @@ class DownloadBase(ABC):
                 return False
 
         # 检查时间范围
-        if not check_timerange(self.fname):
+        time_range_str = self.config['streamers'].get(self.fname, {}).get('time_range')
+        if not check_timerange(time_range_str):
             return False
 
         return True
@@ -266,7 +267,8 @@ class DownloadBase(ABC):
 
             input_args += ['-i', input_uri]
 
-            duration = get_duration(self.segment_time, self.time_range)
+            # duration = get_duration(self.segment_time, self.time_range)
+            duration = self.segment_time
             if duration:
                 output_args += ['-to', duration]
             if self.file_size:

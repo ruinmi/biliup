@@ -35,11 +35,8 @@ loop = asyncio.get_running_loop()
 logger = logging.getLogger('biliup')
 
 
-def check_timerange(name):
-    from biliup.config import config
-    
+def check_timerange(time_range_str):
     try:
-        time_range_str = config['streamers'].get(name, {}).get('time_range')
         if not time_range_str:
             return True
         time_range = json.loads(time_range_str)
