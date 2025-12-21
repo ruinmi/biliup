@@ -2,7 +2,7 @@ use crate::server::common::download::DownloadTask;
 use crate::server::common::util::Recorder;
 use crate::server::config::{Config, default_segment_time};
 use crate::server::core::downloader::DownloadConfig;
-use crate::server::core::plugin::StreamInfoExt;
+use crate::server::core::plugin::{RecordBlockReason, StreamInfoExt};
 use crate::server::infrastructure::connection_pool::ConnectionPool;
 use crate::server::infrastructure::models::StreamerInfo;
 use crate::server::infrastructure::models::live_streamer::LiveStreamer;
@@ -268,6 +268,8 @@ pub enum WorkerStatus {
     /// 空闲状态（默认）
     #[default]
     Idle,
+    /// 未满足录制条件
+    OutOfSchedule(RecordBlockReason),
     /// 下载暂停中
     Pause,
 }
@@ -279,6 +281,10 @@ impl fmt::Debug for WorkerStatus {
             WorkerStatus::Working(_) => "Working",
             WorkerStatus::Pending => "Pending",
             WorkerStatus::Idle => "Idle",
+            WorkerStatus::OutOfSchedule(reason) => match reason {
+                RecordBlockReason::TimeRange => "OutOfSchedule:TimeRange",
+                RecordBlockReason::ExcludedKeywords => "OutOfSchedule:ExcludedKeywords",
+            },
             WorkerStatus::Pause => "Pause",
         };
         f.write_str(name)

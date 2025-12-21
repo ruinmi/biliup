@@ -41,6 +41,25 @@ pub enum StreamStatus {
     Live { stream_info: Box<StreamInfoExt> },
     /// 离线状态
     Offline,
+    /// 禁止录制，包含禁止原因
+    Blocked { reason: RecordBlockReason },
+}
+
+/// 禁止录制原因枚举
+/// 指示录制被阻止的具体原因
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum RecordBlockReason {
+    TimeRange,
+    ExcludedKeywords,
+}
+
+impl RecordBlockReason {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            RecordBlockReason::TimeRange => "TimeRange",
+            RecordBlockReason::ExcludedKeywords => "ExcludedKeywords",
+        }
+    }
 }
 
 /// 下载基础trait

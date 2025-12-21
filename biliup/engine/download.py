@@ -88,19 +88,23 @@ class DownloadBase(ABC):
         # is_check 是否是检测模式 检测模式可以忽略只有下载时需要的耗时操作
         raise NotImplementedError()
 
-    def should_record(self):
-        # 检查房间名
+    def should_record_with_reason(self):
+        # ?????
         keywords = self.config['streamers'].get(self.fname, {}).get('excluded_keywords')
         if self.room_title and keywords:
             if any(k.strip() in self.room_title for k in keywords):
-                return False
+                return False, 'excluded_keywords'
 
-        # 检查时间范围
-        time_range_str = self.config['streamers'].get(self.fname, {}).get('time_range')
-        if not check_timerange(time_range_str):
-            return False
+        # ??????
+        if not check_timerange(self.fname):
+            return False, 'time_range'
 
-        return True
+        return True, None
+
+    def should_record(self):
+        ok, _reason = self.should_record_with_reason()
+        return ok
+
 
     def download(self):
         self.update_headers(self.stream_headers)
@@ -549,22 +553,20 @@ def get_valid_filename(name):
 
 def get_duration(segment_time_str, time_range_str):
     """
-    计算当前时间到给定结束时间的时差
-    如果计算的时差大于segment_time，则返回segment_time。
+    ????????????????
+    ?????????segment_time????segment_time?
     """
-    try:
-        time_range = json.loads(time_range_str)
-        if not isinstance(time_range, (list, tuple)) or len(time_range) != 2:
-            return segment_time_str
-        end_time = datetime.fromisoformat(time_range[1].replace('Z', '+00:00')).time()
-    except Exception as e:
+    parsed = parse_time_range(time_range_str)
+    if not parsed:
         return segment_time_str
 
-    now = datetime.now(timezone.utc).time()
+    _, end_time = parsed
+
+    now = datetime.now(timezone.utc).time().replace(second=0, microsecond=0)
     now_sec = now.hour * 3600 + now.minute * 60 + now.second
     end_sec = end_time.hour * 3600 + end_time.minute * 60 + end_time.second
 
-    # 计算到结束时间的秒数
+    # ??????????
     diff = end_sec - now_sec if end_sec >= now_sec else (24 * 3600 - now_sec + end_sec)
 
     try:

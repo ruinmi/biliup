@@ -164,6 +164,11 @@ pub async fn pause_streamers_endpoint(
                 managers.make_waker(id).await;
                 info!(url=?&w.live_streamer.url, "successfully pause live streamers");
             }
+            WorkerStatus::OutOfSchedule(_) => {
+                w.change_status(Stage::Download, WorkerStatus::Pause).await;
+                managers.make_waker(id).await;
+                info!(url=?&w.live_streamer.url, "successfully pause live streamers");
+            }
         };
     }
 
