@@ -296,7 +296,7 @@ class DownloadBase(ABC):
                                   stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as proc:
                 if "downloading_pid" not in context:
                     context["downloading_pid"] = {}
-                logger1.info(f'setting pid: {self.fname}')
+                logger1.info(f'setting pid: {self.fname}', extra={'streamer': self.fname})
                 context["downloading_pid"][self.fname] = proc
                 for line in iter(proc.stdout.readline, b''):  # b'\n'-separated lines
                     decode_line = line.rstrip().decode(errors='ignore')
