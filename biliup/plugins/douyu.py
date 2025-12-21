@@ -8,7 +8,6 @@ from typing import Union, Any, Optional
 
 
 from ..common.util import client
-from ..config import config
 from ..Danmaku import DanmakuClient
 from ..engine.decorators import Plugin
 from ..engine.download import DownloadBase
@@ -23,13 +22,15 @@ DOUYU_MOBILE_DOMAIN = "m.douyu.com"
 
 @Plugin.download(regexp=r'https?://(?:(?:www|m)\.)?douyu\.com')
 class Douyu(DownloadBase):
-    def __init__(self, fname, url, suffix='flv'):
-        super().__init__(fname, url, suffix)
+    def __init__(self, fname, url, config, suffix='flv'):
+        super().__init__(fname, url, config, suffix)
         self.room_id: str = ""
         self.douyu_danmaku = config.get('douyu_danmaku', False)
         self.douyu_disable_interactive_game = config.get('douyu_disable_interactive_game', False)
         self.douyu_cdn = config.get('douyu_cdn', 'hw-h5')
         self.douyu_rate = config.get('douyu_rate', 0)
+        # 新增：是否强制构建 hs-h5 链接（即使 play_info 返回的 rtmp_cdn 已经是 hs-h5）
+        self.douyu_force_hs = config.get('douyu_force_hs', False)
         self.__js_runable = test_jsengine()
 
 
@@ -94,6 +95,7 @@ class Douyu(DownloadBase):
         # 提到 self 以供 hack 功能使用
         self.__req_query = {
             'cdn': self.douyu_cdn,
+            # 'cdn': "akm-h5",
             'rate': str(self.douyu_rate),
             'ver': '219032101',
             'iar': '0', # ispreload? 1: 忽略 rate 参数，使用默认画质
@@ -130,18 +132,22 @@ class Douyu(DownloadBase):
 
         # HACK: 构造 hs-h5 cdn 直播流链接
         # self.douyu_cdn = 'hs-h5'
-        if self.douyu_cdn == 'hs-h5' and play_info['rtmp_cdn'] != 'hs-h5':
-            if not self.__js_runable:
-                logger.warning(f"{self.plugin_msg}: 未找到 jsengine，无法构建 hs-h5 链接")
-            is_tct = play_info['rtmp_cdn'] == 'tct-h5'
-            try:
-                fake_host, cname_url = await self.build_hs_url(self.raw_stream_url, is_tct)
-            except:
-                logger.exception(f"{self.plugin_msg}: 构建 hs-h5 链接失败")
+        # 修改：当用户选择 hs-h5 时，允许通过配置强制构造 hs 链接（即使 play_info 已经返回 hs-h5）
+        if self.douyu_cdn == 'hs-h5':
+            need_build = self.douyu_force_hs or play_info['rtmp_cdn'] != 'hs-h5'
+            if need_build:
+                if not self.__js_runable:
+                    logger.warning(f"{self.plugin_msg}: 未找到 jsengine，无法构建 hs-h5 链接")
+                is_tct = play_info['rtmp_cdn'] == 'tct-h5'
+                try:
+                    fake_host, cname_url = await self.build_hs_url(self.raw_stream_url, is_tct)
+                except:
+                    logger.exception(f"{self.plugin_msg}: 构建 hs-h5 链接失败")
+                else:
+                    self.raw_stream_url = cname_url
+                    self.stream_headers['Host'] = fake_host
             else:
-                self.raw_stream_url = cname_url
-                self.stream_headers['Host'] = fake_host
-
+                logger.debug(f"{self.plugin_msg}: play_info 返回的 rtmp_cdn 已是 hs-h5，且未开启 douyu_force_hs，跳过构建 hs-h5")
         return True
 
 
@@ -292,10 +298,10 @@ class Douyu(DownloadBase):
                     i = "1"
                 return f"dyliveflv{i}"
             return app_name
-        list = url.split('?')
-        query = {k: v[0] for k, v in parse_qs(list[1]).items()}
-        stream_id = list[0].split('/')[-1].split('.')[0].split('_')[0]
-        rtmp_url = list[0].split(stream_id)[0]
+        base_url, params, *_ = url.split('?')
+        query = {k: v[0] for k, v in parse_qs(params).items()}
+        stream_id = match1(base_url, rf"\/({self.room_id}[^\._/]+)")
+        rtmp_url = url.split(stream_id)[0]
         return get_tx_app_name(rtmp_url[:-1]), stream_id, query
 
 
@@ -335,6 +341,7 @@ class Douyu(DownloadBase):
         :param is_tct: 是否为 tct 流
         return: fake_hs_host, hs_cname_url
         '''
+        logger.debug(f"build_hs_url: build from {url}")
         tx_app_name, stream_id, query = self.parse_stream_info(url)
         # 必须从 tct 转 hs
         if not is_tct:

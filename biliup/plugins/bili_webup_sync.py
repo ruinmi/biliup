@@ -20,7 +20,6 @@ from urllib import parse
 from urllib.parse import quote
 
 # import aiohttp
-from biliup.app import context
 from concurrent.futures.thread import ThreadPoolExecutor
 import concurrent
 import requests.utils
@@ -28,7 +27,6 @@ import rsa
 import xml.etree.ElementTree as ET
 from requests.adapters import HTTPAdapter, Retry
 
-from biliup.config import config
 from ..engine import Plugin
 from ..engine.upload import UploadBase, logger
 
@@ -366,6 +364,7 @@ class BiliBili:
             file_name_callback: Callable[[str], None] = None,
             submit_api: Callable[[str], None] = None
     ):
+        from biliup.app import context
 
         logger.info(f"{file_name} 开始上传")
         if self.save_dir:

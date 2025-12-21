@@ -1,8 +1,18 @@
 use biliup::uploader::bilibili::{Studio, Vid};
 use biliup::uploader::util::SubmitOption;
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
+use crate::UploadLine;
 use std::path::PathBuf;
+
+/// 扩展路径中的 ~ 为用户主目录
+pub fn expand_path(path: PathBuf) -> PathBuf {
+    if let Some(path_str) = path.to_str() {
+        let expanded = shellexpand::tilde(path_str);
+        return PathBuf::from(expanded.as_ref());
+    }
+    path
+}
 
 #[derive(Parser)]
 #[command(author, version, about)]
@@ -63,7 +73,7 @@ pub enum Commands {
     },
     /// 是否要对某稿件追加视频
     Append {
-         /// 提交接口
+        /// 提交接口
         #[arg(long)]
         submit: Option<SubmitOption>,
 
@@ -114,7 +124,6 @@ pub enum Commands {
         #[arg(long)]
         split_time: Option<humantime::Duration>,
     },
-    #[cfg(feature = "server")]
     /// 启动web服务，默认端口19159
     Server {
         /// Specify bind address
@@ -124,6 +133,10 @@ pub enum Commands {
         /// Port to use
         #[arg(short, long, default_value = "19159")]
         port: u16,
+
+        /// 开启登录密码认证
+        #[arg(long, default_value = "false")]
+        auth: bool,
     },
     /// 列出所有已上传的视频
     List {
@@ -147,17 +160,6 @@ pub enum Commands {
         #[arg(short, long)]
         max_pages: Option<u32>,
     },
-}
-
-#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, ValueEnum)]
-pub enum UploadLine {
-    Bda2,
-    Qn,
-    Bldsa,
-    Tx,
-    Txa,
-    Bda,
-    Alia,
 }
 
 fn human_size(s: &str) -> Result<u64, String> {

@@ -144,6 +144,7 @@ impl Upos {
         Ok(stream)
     }
 
+    /// 通知视频上传完成并获取视频信息
     pub(crate) async fn get_ret_video_info(
         &self,
         parts: &[serde_json::Value],
@@ -176,14 +177,22 @@ impl Upos {
         if res["OK"] != 1 {
             return Err(Kind::Custom(res.to_string()));
         }
+        let filename = Path::new(&self.bucket.upos_uri)
+            .file_stem()
+            .unwrap()
+            .to_str()
+            .unwrap();
+
+        // B站限制分P视频标题不能超过80字符，需要截断filename字段
+        let truncated_filename = if filename.chars().count() >= 80 {
+            Video::truncate_title(filename, 80)
+        } else {
+            filename.to_string()
+        };
+
         Ok(Video {
             title: None,
-            filename: Path::new(&self.bucket.upos_uri)
-                .file_stem()
-                .unwrap()
-                .to_str()
-                .unwrap()
-                .into(),
+            filename: truncated_filename,
             desc: "".into(),
         })
     }

@@ -12,7 +12,7 @@ use std::time::Duration;
 use tokio::time::timeout;
 use tracing::{info, warn};
 
-pub async fn download(connection: Connection, file: LifecycleFile, segment: Segmentable) {
+pub async fn download(connection: Connection, file: LifecycleFile<'_>, segment: Segmentable) {
     let file_name = file.file_name.clone();
     match parse_flv(connection, file, segment).await {
         Ok(_) => {
@@ -26,7 +26,7 @@ pub async fn download(connection: Connection, file: LifecycleFile, segment: Segm
 
 pub(crate) async fn parse_flv(
     mut connection: Connection,
-    file: LifecycleFile,
+    file: LifecycleFile<'_>,
     mut segment: Segmentable,
 ) -> crate::downloader::error::Result<()> {
     let mut flv_tags_cache: Vec<(TagHeader, Bytes, Bytes)> = Vec::new();
@@ -129,11 +129,10 @@ pub(crate) async fn parse_flv(
                 }
                 on_meta_data = Some((tag_header, bytes.clone(), previous_tag_size.clone()));
 
-                let flv_tag = FlvTag {
+                FlvTag {
                     header: tag_header,
                     data: TagDataHeader::Script(tag_data),
-                };
-                flv_tag
+                }
             }
         };
         match &flv_tag {
@@ -282,11 +281,10 @@ impl Connection {
 
 #[cfg(test)]
 mod tests {
-    use anyhow::Result;
     use bytes::{Buf, BufMut, BytesMut};
 
     #[test]
-    fn byte_it_works() -> Result<()> {
+    fn byte_it_works() -> Result<(), Box<dyn std::error::Error>> {
         let mut bb = bytes::BytesMut::with_capacity(10);
         println!("chunk {:?}", bb.chunk());
         println!("capacity {}", bb.capacity());
@@ -318,7 +316,7 @@ mod tests {
     }
 
     #[test]
-    fn it_works() -> Result<()> {
+    fn it_works() -> Result<(), Box<dyn std::error::Error>> {
         // download(
         //     "test.flv")?;
         Ok(())

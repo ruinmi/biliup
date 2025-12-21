@@ -1,84 +1,89 @@
-use crate::server::core::live_streamers::{
-    DynDownloadRecordsRepository, DynLiveStreamersRepository, DynLiveStreamersService,
-    DynVideosRepository,
-};
-use crate::server::core::upload_streamers::{
-    DynUploadRecordsRepository, DynUploadStreamersRepository,
-};
-use crate::server::core::users::DynUsersRepository;
+use crate::LogHandle;
+use crate::server::config::Config;
+use crate::server::core::download_manager::DownloadManager;
+use crate::server::core::plugin::yy::YY;
 use crate::server::infrastructure::connection_pool::ConnectionPool;
-use crate::server::infrastructure::live_streamers_service::ConduitLiveStreamersService;
-use crate::server::infrastructure::repositories::download_records_repository::SqliteDownloadRecordsRepository;
-use crate::server::infrastructure::repositories::live_streamers_repository::SqliteLiveStreamersRepository;
-use crate::server::infrastructure::repositories::upload_records_repository::SqliteUploadRecordsRepository;
-use crate::server::infrastructure::repositories::upload_streamers_repository::SqliteUploadStreamersRepository;
-use crate::server::infrastructure::repositories::users_repository::SqliteUsersStreamersRepository;
-use crate::server::infrastructure::repositories::videos_repository::SqliteVideosRepository;
+use crate::server::infrastructure::context::Worker;
+use crate::server::infrastructure::models::live_streamer::LiveStreamer;
+use crate::server::infrastructure::models::upload_streamer::UploadStreamer;
 use axum::extract::FromRef;
-use std::sync::Arc;
+use biliup::client::StatelessClient;
+use error_stack::Report;
+use error_stack::fmt::ColorMode;
+use std::sync::{Arc, RwLock};
 use tracing::info;
 
-#[derive(Clone)]
+/// 服务注册器
+/// 负责管理应用程序中的各种服务实例，包括数据库连接池、工作器、下载管理器等
+#[derive(FromRef, Clone)]
 pub struct ServiceRegister {
-    pub streamers_service: DynLiveStreamersService,
-    pub live_streamers_repository: DynLiveStreamersRepository,
-    pub upload_streamers_repository: DynUploadStreamersRepository,
-    pub users_repository: DynUsersRepository,
-    pub upload_records_repository: DynUploadRecordsRepository,
-    pub videos_repository: DynVideosRepository,
-    pub download_records_repository: DynDownloadRecordsRepository,
+    /// 数据库连接池
+    pub pool: ConnectionPool,
+    /// 下载管理器列表
+    pub managers: Arc<DownloadManager>,
+    /// 全局配置
+    pub config: Arc<RwLock<Config>>,
+    /// HTTP客户端
+    pub client: StatelessClient,
+
+    pub log_handle: LogHandle,
 }
 
-/// A simple service container responsible for managing the various services our API endpoints will pull from through axum extensions.
+/// 简单的服务容器，负责管理API端点通过axum扩展获取的各种服务
 impl ServiceRegister {
-    pub fn new(pool: ConnectionPool) -> Self {
+    /// 创建新的服务注册器实例
+    ///
+    /// # 参数
+    /// * `pool` - 数据库连接池
+    /// * `config` - 全局配置
+    /// * `actor_handle` - Actor处理器
+    /// * `download_manager` - 下载管理器列表
+    pub fn new(
+        pool: ConnectionPool,
+        config: Arc<RwLock<Config>>,
+        download_manager: DownloadManager,
+        log_handle: LogHandle,
+    ) -> Self {
+        Report::set_color_mode(ColorMode::None);
         info!("initializing utility services...");
+        // 创建默认的HTTP客户端
+        let client = StatelessClient::default();
 
         info!("utility services initialized, building feature services...");
-        let streamers_repository = Arc::new(SqliteLiveStreamersRepository::new(pool.clone()))
-            as DynLiveStreamersRepository;
-        let upload_streamers_repository =
-            Arc::new(SqliteUploadStreamersRepository::new(pool.clone()))
-                as DynUploadStreamersRepository;
 
-        let users_repository =
-            Arc::new(SqliteUsersStreamersRepository::new(pool.clone())) as DynUsersRepository;
+        // download_manager.push(DownloadManager::new(YY::new(), actor_handle.clone()));
+        download_manager.add_plugin(Arc::new(YY::new()));
 
-        let upload_records_repository = Arc::new(SqliteUploadRecordsRepository::new(pool.clone()))
-            as DynUploadRecordsRepository;
-
-        let videos_repository =
-            Arc::new(SqliteVideosRepository::new(pool.clone())) as DynVideosRepository;
-
-        let download_records_repository =
-            Arc::new(SqliteDownloadRecordsRepository::new(pool)) as DynDownloadRecordsRepository;
-
-        let streamers_service = Arc::new(ConduitLiveStreamersService::new(
-            streamers_repository.clone(),
-            upload_streamers_repository.clone(),
-        )) as DynLiveStreamersService;
         info!("feature services successfully initialized!");
-
         ServiceRegister {
-            streamers_service,
-            live_streamers_repository: streamers_repository,
-            upload_streamers_repository,
-            users_repository,
-            upload_records_repository,
-            videos_repository,
-            download_records_repository,
+            pool,
+            managers: Arc::new(download_manager),
+            config: config.clone(),
+            client,
+            log_handle,
         }
     }
-}
 
-impl FromRef<ServiceRegister> for DynLiveStreamersRepository {
-    fn from_ref(app_state: &ServiceRegister) -> DynLiveStreamersRepository {
-        app_state.live_streamers_repository.clone()
+    pub fn worker(
+        &self,
+        live_streamer: LiveStreamer,
+        upload_streamer: Option<UploadStreamer>,
+    ) -> Worker {
+        Worker::new(
+            live_streamer,
+            upload_streamer,
+            self.config.clone(),
+            self.client.clone(),
+        )
+    }
+
+    pub async fn cleanup(&self) {
+        self.managers.cleanup().await;
     }
 }
 
-impl FromRef<ServiceRegister> for DynUsersRepository {
-    fn from_ref(app_state: &ServiceRegister) -> DynUsersRepository {
-        app_state.users_repository.clone()
-    }
-}
+// impl FromRef<ServiceRegister> for ConnectionPool {
+//     fn from_ref(app_state: &ServiceRegister) -> ConnectionPool {
+//         app_state.pool.clone()
+//     }
+// }

@@ -4,12 +4,12 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
-    "build": "next build && ncp ./out ./biliup/web/public",
+    "build": "next build",
     "start": "next start",
     "lint": "next lint"
   },
   "dependencies": {
-    "@douyinfe/semi-ui": "^2.75.0",
+    "@douyinfe/semi-ui": "^2.88.2",
     "artplayer": "^5.2.1",
     "mpegts.js": "^1.8.0",
     "next": "^14.2.26",
