@@ -3,6 +3,7 @@
 # 2024.06.22: 添加来自 https://github.com/hua0512/stream-rec 修改后的 webmssdk.js，以计算 signature
 
 import gzip
+import logging
 
 import aiohttp
 import json
@@ -16,23 +17,23 @@ import logging
 logger = logging.getLogger('biliup')
 
 class Douyin:
-    headers = {
-        # 'user-agent': random_user_agent(),
-        'Referer': 'https://live.douyin.com/',
-        'Cookie': config.get('user', {}).get('douyin_cookie', '')
-    }
     heartbeat = b':\x02hb'
     heartbeatInterval = 10
 
     @staticmethod
     async def get_ws_info(url, context):
+        headers = {
+            # 'user-agent': random_user_agent(),
+            'Referer': 'https://live.douyin.com/',
+            'Cookie': context['config'].get('user', {}).get('douyin_cookie', '')
+        }
         async with aiohttp.ClientSession() as session:
             from biliup.plugins.douyin import DouyinUtils
             from .douyin_util import DouyinDanmakuUtils
-            Douyin.headers['user-agent'] = DouyinUtils.DOUYIN_USER_AGENT
+            headers['user-agent'] = DouyinUtils.DOUYIN_USER_AGENT
 
-            if "ttwid" not in Douyin.headers['Cookie']:
-                Douyin.headers['Cookie'] = f'ttwid={DouyinUtils.get_ttwid()};{Douyin.headers["Cookie"]}'
+            if "ttwid" not in headers['Cookie']:
+                headers['Cookie'] = f'ttwid={DouyinUtils.get_ttwid()};{headers["Cookie"]}'
 
             USER_UNIQUE_ID = DouyinDanmakuUtils.get_user_unique_id()
             VERSION_CODE = 180800 # https://lf-cdn-tos.bytescm.com/obj/static/webcast/douyin_live/7697.782665f8.js -> a.ry

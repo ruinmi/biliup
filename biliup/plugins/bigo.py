@@ -1,5 +1,4 @@
 import biliup.common.util
-from ..common import tools
 from ..engine.decorators import Plugin
 from ..engine.download import DownloadBase
 from ..plugins import logger
@@ -7,8 +6,8 @@ from ..plugins import logger
 
 @Plugin.download(regexp=r'(?:https?://)?www\.bigo\.tv')
 class Bigo(DownloadBase):
-    def __init__(self, fname, url, suffix='flv'):
-        super().__init__(fname, url, suffix)
+    def __init__(self, fname, url, config, suffix='flv'):
+        super().__init__(fname, url, config, suffix)
 
     async def acheck_stream(self, is_check=False):
         try:

@@ -3,15 +3,14 @@ import re
 
 import biliup.common.util
 from . import logger
-from ..common import tools
 from ..engine.decorators import Plugin
 from ..engine.download import DownloadBase
 
 
 @Plugin.download(regexp=r'(?:https?://)?(?:(?:www)\.)?inke\.cn')
 class Inke(DownloadBase):
-    def __init__(self, fname, url, suffix='flv'):
-        super().__init__(fname, url, suffix)
+    def __init__(self, fname, url, config, suffix='flv'):
+        super().__init__(fname, url, config, suffix)
 
     async def acheck_stream(self, is_check=False):
         logger.debug(self.fname)

@@ -7,9 +7,7 @@ import requests
 import random
 
 from ..common.util import client
-from ..config import config
 from ..Danmaku import DanmakuClient
-from ..common.tools import NamedLock
 from ..common.abogus import ABogus
 from ..engine.decorators import Plugin
 from ..engine.download import DownloadBase
@@ -18,14 +16,15 @@ from . import logger, match1, random_user_agent, json_loads, test_jsengine
 
 @Plugin.download(regexp=r'https?://(?:(?:www|m|live|v)\.)?douyin\.com')
 class Douyin(DownloadBase):
-    def __init__(self, fname, url, suffix='flv'):
-        super().__init__(fname, url, suffix)
+    def __init__(self, fname, url, config, suffix='flv'):
+        super().__init__(fname, url, config, suffix)
         self.douyin_danmaku = config.get('douyin_danmaku', False)
         self.douyin_danmaku_detail = config.get('douyin_danmaku_detail', False)
         self.douyin_quality = config.get('douyin_quality', 'origin')
         self.douyin_protocol = config.get('douyin_protocol', 'flv')
         self.douyin_double_screen = config.get('douyin_double_screen', False)
         self.douyin_true_origin = config.get('douyin_true_origin', False)
+        self.fake_headers['cookie'] = config.get('user', {}).get('douyin_cookie', '')
         self.__web_rid = None # 网页端房间号 或 抖音号
         self.__room_id = None # 单场直播的直播房间
         self.__sec_uid = None
@@ -35,7 +34,6 @@ class Douyin(DownloadBase):
         self.fake_headers['user-agent'] = DouyinUtils.DOUYIN_USER_AGENT
         self.fake_headers['referer'] = "https://live.douyin.com/"
 
-        self.fake_headers['cookie'] = config.get('user', {}).get('douyin_cookie', '')
         if self.fake_headers['cookie'] != "" and not self.fake_headers['cookie'].endswith(';'):
             self.fake_headers['cookie'] += ";"
         if "ttwid" not in self.fake_headers['cookie']:
@@ -203,16 +201,17 @@ class Douyin(DownloadBase):
 
     def danmaku_init(self):
         if self.douyin_danmaku:
-            if (js_runable := test_jsengine()):content = {
-                'web_rid': self.__web_rid,
-                'sec_uid': self.__sec_uid,
-                'room_id': self.__room_id,
-                'detail': self.douyin_danmaku_detail,
-            }
-            
-            self.danmaku = DanmakuClient(self.url, self.gen_download_filename(), content)
-        else:
-            logger.error(f"如需录制抖音弹幕，请至少安装一个 Javascript 解释器。如 pip install quickjs")
+            if (js_runable := test_jsengine()):
+                content = {
+                    'web_rid': self.__web_rid,
+                    'sec_uid': self.__sec_uid,
+                    'room_id': self.__room_id,
+                    'detail': self.douyin_danmaku_detail,
+                    'config': self.config
+                }
+                self.danmaku = DanmakuClient(self.url, self.gen_download_filename(), content)
+            else:
+                logger.error(f"如需录制抖音弹幕，请至少安装一个 Javascript 解释器。如 pip install quickjs")
 
     async def get_web_room_info(self, web_rid: str) -> dict:
         query = {
@@ -270,7 +269,6 @@ class DouyinUtils:
 
     @staticmethod
     def get_ttwid() -> Optional[str]:
-        with NamedLock("douyin_ttwid_get"):
             if not DouyinUtils._douyin_ttwid:
                 page = requests.get("https://live.douyin.com/1-2-3-4-5-6-7-8-9-0", timeout=15)
                 DouyinUtils._douyin_ttwid = page.cookies.get("ttwid")

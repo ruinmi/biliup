@@ -14,20 +14,20 @@ pub enum Segment {
     Never,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Segmentable {
     time: Time,
     size: Size,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Time {
     expected: Option<Duration>,
     start: Duration,
     current: Duration,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct Size {
     expected: Option<u64>,
     current: u64,
@@ -222,25 +222,28 @@ impl Default for Segmentable {
     }
 }
 
-pub struct LifecycleFile {
+pub struct LifecycleFile<'a> {
     pub fmt_file_name: String,
     pub file_name: String,
     pub path: PathBuf,
-    pub hook: CallbackFn,
+    pub hook: CallbackFn<'a>,
     pub extension: &'static str,
 }
 
-impl LifecycleFile {
-    pub fn new(fmt_file_name: &str, extension: &'static str, hook: Option<CallbackFn>) -> Self {
-        let hook: Box<dyn Fn(&str) + Send> = match hook {
-            Some(hook) => hook,
-            _ => Box::new(|_| {}),
-        };
+impl<'a> LifecycleFile<'a> {
+    pub fn new(fmt_file_name: &str, extension: &'static str) -> Self {
+        Self::with_hook(fmt_file_name, extension, |_| {})
+    }
+
+    pub fn with_hook<F>(fmt_file_name: &str, extension: &'static str, hook: F) -> Self
+    where
+        F: FnMut(&str) + Send + Sync + 'a,
+    {
         Self {
             fmt_file_name: fmt_file_name.to_string(),
             file_name: "".to_string(),
             path: Default::default(),
-            hook,
+            hook: Box::new(hook),
             extension,
         }
     }
@@ -266,7 +269,8 @@ impl LifecycleFile {
         Ok(self.path.as_path())
     }
 
-    pub fn rename(&self) {
+    pub fn rename(&mut self) {
+        // 去掉 .part 后缀
         match fs::rename(&self.path, &self.file_name) {
             Ok(_) => (self.hook)(&self.file_name),
             Err(e) => {
@@ -287,11 +291,10 @@ pub fn format_filename(file_name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::Result;
     use std::path::{Path, PathBuf};
 
     #[test]
-    fn it_works() -> Result<()> {
+    fn it_works() -> Result<(), Box<dyn std::error::Error>> {
         let mut p = PathBuf::from("/feel/the");
 
         p.set_extension("force");
@@ -304,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn test_segmentation_logic() -> Result<()> {
+    fn test_segmentation_logic() -> Result<(), Box<dyn std::error::Error>> {
         // 测试时间分割
         let mut seg = Segmentable::new(Some(Duration::from_secs(10)), None);
         assert!(!seg.needed());
