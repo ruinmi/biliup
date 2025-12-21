@@ -341,6 +341,30 @@ impl OnceConfig {
         };
         Ok(default)
     }
+
+    #[pyo3(name = "__getitem__")]
+    fn get_item<'py>(&self, py: Python<'py>, key: &str) -> PyResult<Bound<'py, PyAny>> {
+        let guard = &self.map;
+        if let Some(bound) = pythonize(py, guard)?
+            .extract::<Bound<PyDict>>()?
+            .get_item(key)?
+        {
+            // Keep behavior consistent with get(): filter None values in dicts.
+            return match bound.cast::<PyDict>() {
+                Ok(dict) => {
+                    let filtered = PyDict::new(py);
+                    dict.iter()
+                        .filter(|(_, v)| !v.is_none())
+                        .try_for_each(|(k, v)| filtered.set_item(k, v))?;
+                    Ok(filtered.into_any())
+                }
+                Err(_) => Ok(bound),
+            };
+        }
+        Err(pyo3::exceptions::PyKeyError::new_err(format!(
+            "key not found: '{key}'"
+        )))
+    }
 }
 
 #[pyclass]

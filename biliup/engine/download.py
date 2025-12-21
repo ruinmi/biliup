@@ -89,14 +89,15 @@ class DownloadBase(ABC):
         raise NotImplementedError()
 
     def should_record_with_reason(self):
-        # ?????
+        # Check room title keywords
         keywords = self.config['streamers'].get(self.fname, {}).get('excluded_keywords')
         if self.room_title and keywords:
             if any(k.strip() in self.room_title for k in keywords):
                 return False, 'excluded_keywords'
 
-        # ??????
-        if not check_timerange(self.fname):
+        # Check time range
+        time_range_str = self.config['streamers'].get(self.fname, {}).get('time_range')
+        if not check_timerange(time_range_str):
             return False, 'time_range'
 
         return True, None
@@ -553,8 +554,8 @@ def get_valid_filename(name):
 
 def get_duration(segment_time_str, time_range_str):
     """
-    ????????????????
-    ?????????segment_time????segment_time?
+    Calculate time delta from now to end time.
+    If delta is larger than segment_time, return segment_time.
     """
     parsed = parse_time_range(time_range_str)
     if not parsed:
@@ -566,7 +567,7 @@ def get_duration(segment_time_str, time_range_str):
     now_sec = now.hour * 3600 + now.minute * 60 + now.second
     end_sec = end_time.hour * 3600 + end_time.minute * 60 + end_time.second
 
-    # ??????????
+    # Seconds until end time
     diff = end_sec - now_sec if end_sec >= now_sec else (24 * 3600 - now_sec + end_sec)
 
     try:
