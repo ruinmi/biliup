@@ -6,11 +6,7 @@ import gzip
 import logging
 
 import aiohttp
-import json
-from urllib.parse import unquote
-from biliup.config import config
 from .douyin_util.dy_pb2 import ChatMessage, PushFrame, Response, GiftMessage
-from biliup.plugins import match1
 from google.protobuf import json_format
 import logging
 
