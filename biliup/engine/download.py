@@ -63,8 +63,8 @@ class DownloadBase(ABC):
         }
         self.stream_headers = copy.deepcopy(self.fake_headers)
         self.segment_time = config.get('segment_time', '01:00:00')
-        # self.time_range = config.get('time_range')
-        # self.excluded_keywords = config.get('excluded_keywords')
+        self.time_range = None
+        self.excluded_keywords = None
         self.file_size = config.get('file_size')
 
         # 是否是下载模式 跳过下播检测
@@ -90,15 +90,27 @@ class DownloadBase(ABC):
 
     def should_record_with_reason(self):
         # Check room title keywords
-        keywords = self.config['streamers'].get(self.fname, {}).get('excluded_keywords')
+        try:
+            streamer_cfg = self.config.get('streamers', {}).get(self.fname, {})
+        except Exception:
+            streamer_cfg = None
+
+        keywords = getattr(self, 'excluded_keywords', None)
+        if not keywords and streamer_cfg:
+            keywords = streamer_cfg.get('excluded_keywords')
+
         if self.room_title and keywords:
             if any(k.strip() in self.room_title for k in keywords):
                 return False, 'excluded_keywords'
 
-        # Check time range
-        time_range_str = self.config['streamers'].get(self.fname, {}).get('time_range')
-        if not check_timerange(time_range_str):
-            return False, 'time_range'
+        time_range = getattr(self, 'time_range', None)
+        if not time_range and streamer_cfg:
+            time_range = streamer_cfg.get('time_range')
+
+        if time_range:
+            self.time_range = time_range
+            if not check_timerange(time_range):
+                return False, 'time_range'
 
         return True, None
 
@@ -272,8 +284,7 @@ class DownloadBase(ABC):
 
             input_args += ['-i', input_uri]
 
-            # duration = get_duration(self.segment_time, self.time_range)
-            duration = self.segment_time
+            duration = get_duration(self.segment_time, self.time_range)
             if duration:
                 output_args += ['-to', duration]
             if self.file_size:

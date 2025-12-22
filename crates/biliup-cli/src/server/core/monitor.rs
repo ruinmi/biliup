@@ -534,7 +534,12 @@ impl RoomsActor {
         self.platforms
             .get_mut(plugin.name())?
             .push_back(worker.clone());
-        *worker.downloader_status.write().unwrap() = WorkerStatus::Idle;
+        if !matches!(
+            *worker.downloader_status.read().unwrap(),
+            WorkerStatus::OutOfSchedule(_)
+        ) {
+            *worker.downloader_status.write().unwrap() = WorkerStatus::Idle;
+        }
         Some(plugin)
     }
 

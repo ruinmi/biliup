@@ -79,7 +79,7 @@ class Huya(DownloadBase):
             return True
 
         stream_urls = await self.build_stream_urls(room_profile['streams_info'])
-        print(stream_urls)
+        # print(stream_urls)
         cdn_list = list(stream_urls.keys())
         if not self.huya_cdn or self.huya_cdn not in cdn_list:
             self.huya_cdn = cdn_list[0]
@@ -123,11 +123,11 @@ class Huya(DownloadBase):
             room_profile['max_bitrate']
         )
 
-        print({
-            "name": self.fname,
-            "stream_headers": self.stream_headers,
-            "raw_stream_url": self.raw_stream_url,
-        })
+        # print({
+        #     "name": self.fname,
+        #     "stream_headers": self.stream_headers,
+        #     "raw_stream_url": self.raw_stream_url,
+        # })
         return True
 
 
@@ -298,7 +298,7 @@ class Huya(DownloadBase):
         tid = HuyaUserId()
         # tid.sHuYaUA = f"webh5&{now.strftime("%y%m%d%H%M")}&websocket"
         tid.sHuYaUA = f"huya_nftv&2.6.10.{random.randint(3000, 5000)}&official&{random.randint(28, 36)}"
-        print(f"sHuYaUA: {tid.sHuYaUA}")
+        # print(f"sHuYaUA: {tid.sHuYaUA}")
         wup_req = Wup()
         wup_req.requestid = abs(DEFAULT_TICKET_NUMBER)
         wup_req.servant = servant
@@ -315,7 +315,7 @@ class Huya(DownloadBase):
         url = HUYA_WUP_BASE_URL
         if random.random() > 0.5:
             url = f"{HUYA_WUP_YST_URL}/{servant}/{func}"
-        print(f"send requests to {url}")
+        # print(f"send requests to {url}")
         rsp = await client.post(url, data=data)
         rsp_bytes = rsp.content
         wup_rsp = Wup()
@@ -325,7 +325,7 @@ class Huya(DownloadBase):
             name="tRsp"
         )
         cdn_token_info_ex = getCdnTokenInfoExRsp.as_dict()
-        print(f"{self.plugin_msg}: wup token_info {cdn_token_info_ex}")
+        # print(f"{self.plugin_msg}: wup token_info {cdn_token_info_ex}")
         return cdn_token_info_ex['sFlvToken']
 
 
@@ -365,7 +365,7 @@ class Huya(DownloadBase):
             uid = int(uid)
         if uid == 0:
             uid = self.generate_random_uid()
-        print(f"使用 {uid} 作为 uid 参与计算")
+        # print(f"使用 {uid} 作为 uid 参与计算")
         seq_id = uid + int(clac_start_time * 1000)
         secret_hash = hashlib.md5(f"{seq_id}|{ctype}|{platform_id}".encode()).hexdigest()
         convert_uid = rotl64(uid)

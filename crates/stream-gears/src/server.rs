@@ -30,6 +30,7 @@ use pyo3::types::{PyList, PyType};
 use pyo3::{Bound, Py, PyAny, PyResult, Python};
 use pyo3::{pyclass, pyfunction, pymethods};
 use pythonize::pythonize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::ops::Deref;
@@ -70,17 +71,28 @@ pub struct PyDownloader {
     url: String,
     remark: String,
     danmaku: Option<Arc<Py<PyAny>>>,
+    time_range: Option<String>,
+    excluded_keywords: Option<Vec<String>>,
 
     cfg: OnceConfig,
 }
 
 impl PyDownloader {
-    fn new(plugin: Arc<Py<PyType>>, url: String, remark: String, cfg: Config) -> Self {
+    fn new(
+        plugin: Arc<Py<PyType>>,
+        url: String,
+        remark: String,
+        cfg: Config,
+        time_range: Option<String>,
+        excluded_keywords: Option<Vec<String>>,
+    ) -> Self {
         Self {
             plugin,
             url: url.clone(),
             remark: remark.clone(),
             danmaku: None,
+            time_range,
+            excluded_keywords,
             cfg: OnceConfig { map: cfg },
         }
     }
@@ -90,6 +102,8 @@ impl PyDownloader {
         let remark = self.remark.clone();
         let obj = self.plugin.clone();
         let config = self.cfg.clone();
+        let time_range = self.time_range.clone();
+        let excluded_keywords = self.excluded_keywords.clone();
         let result = tokio::task::spawn_blocking(move || {
             Python::attach(
                 |py| -> PyResult<(Option<StreamInfoExt>, Option<Py<PyAny>>, Option<String>)> {
@@ -107,6 +121,13 @@ impl PyDownloader {
 
                     // 生成协程 self.acheck_stream()
                     let instance = obj.bind(py).call1((remark, url, config))?;
+                    if let Some(time_range) = time_range {
+                        instance.setattr("time_range", time_range)?;
+                    }
+                    if let Some(excluded_keywords) = excluded_keywords {
+                        let list = PyList::new(py, &excluded_keywords)?;
+                        instance.setattr("excluded_keywords", list)?;
+                    }
                     let coro = instance.call_method0("acheck_stream")?;
 
                     // 调度到指定 loop
@@ -230,11 +251,24 @@ impl DownloadPlugin for PyPlugin {
     fn create_downloader(&self, ctx: &mut PluginContext) -> Box<dyn DownloadBase> {
         let url = ctx.live_streamer().url.to_string();
         let remark = ctx.live_streamer().remark.to_string();
+        let time_range = ctx.live_streamer().time_range.clone();
+        let excluded_keywords = match &ctx.live_streamer().excluded_keywords {
+            Some(Value::Array(values)) => {
+                let list: Vec<String> = values
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                if list.is_empty() { None } else { Some(list) }
+            }
+            _ => None,
+        };
         Box::new(PyDownloader::new(
             self.plugin.clone(),
             url,
             remark,
             ctx.config(),
+            time_range,
+            excluded_keywords,
         ))
     }
 
