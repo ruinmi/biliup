@@ -82,6 +82,16 @@ impl FfmpegDownloader {
             args.extend(["-segment_time".to_string(), seconds.to_string()]);
         }
 
+        // 判断是否是张嘉文的直播
+        if download_config
+            .recorder
+            .streamer_info
+            .name
+            .contains("张嘉文")
+        {
+            args.push("-sn".to_string());
+        }
+
         // 添加通用输出参数
         self.append_common_output_args(&mut args, "segment");
 
@@ -459,9 +469,7 @@ fn parse_segment_seconds(segment_time: &str) -> Option<u64> {
     Some(hours * 3600 + minutes * 60 + seconds)
 }
 
-async fn stop_and_wait(
-    process_handle: &RwLock<Option<tokio::process::Child>>,
-) -> AppResult<()> {
+async fn stop_and_wait(process_handle: &RwLock<Option<tokio::process::Child>>) -> AppResult<()> {
     let mut handle = process_handle.write().await;
     if let Some(child) = handle.as_mut() {
         child.kill().await.change_context(AppError::Unknown)?;
