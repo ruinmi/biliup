@@ -81,6 +81,16 @@ impl FfmpegDownloader {
             args.extend(["-segment_time".to_string(), seconds.to_string()]);
         }
 
+        // 判断是否是张嘉文的直播
+        if download_config
+            .recorder
+            .streamer_info
+            .name
+            .contains("张嘉文")
+        {
+            args.push("-sn".to_string());
+        }
+
         // 添加通用输出参数
         self.append_common_output_args(&mut args, "segment");
 
