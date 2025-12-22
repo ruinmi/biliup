@@ -14,6 +14,7 @@ use crate::server::infrastructure::models::hook_step::process;
 use async_channel::{Receiver, Sender};
 use error_stack::{ResultExt, bail};
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -174,6 +175,10 @@ impl DownloadTask {
                     );
                     // 成功下载后重置计数
                     retry_count = 0;
+                }
+                Ok(StreamStatus::Blocked { reason }) => {
+                    retry_count += 1;
+                    info!(url = url, reason = ?reason, "Stream blocked by record policy, stopping download");
                 }
                 Ok(StreamStatus::Offline) => {
                     retry_count += 1;

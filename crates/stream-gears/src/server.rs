@@ -8,7 +8,9 @@ use biliup_cli::server::common::util::media_ext_from_url;
 use biliup_cli::server::config::Config;
 use biliup_cli::server::core::download_manager::DownloadManager;
 use biliup_cli::server::core::downloader::DanmakuClient;
-use biliup_cli::server::core::plugin::{DownloadBase, DownloadPlugin, StreamInfoExt, StreamStatus};
+use biliup_cli::server::core::plugin::{
+    DownloadBase, DownloadPlugin, RecordBlockReason, StreamInfoExt, StreamStatus,
+};
 use biliup_cli::server::errors::{AppError, AppResult};
 use biliup_cli::server::infrastructure::connection_pool::ConnectionManager;
 use biliup_cli::server::infrastructure::context::{PluginContext, Worker};
@@ -28,6 +30,7 @@ use pyo3::types::{PyList, PyType};
 use pyo3::{Bound, Py, PyAny, PyResult, Python};
 use pyo3::{pyclass, pyfunction, pymethods};
 use pythonize::pythonize;
+use serde_json::Value;
 use std::collections::HashMap;
 use std::net::ToSocketAddrs;
 use std::ops::Deref;
@@ -68,120 +71,166 @@ pub struct PyDownloader {
     url: String,
     remark: String,
     danmaku: Option<Arc<Py<PyAny>>>,
+    time_range: Option<String>,
+    excluded_keywords: Option<Vec<String>>,
 
     cfg: OnceConfig,
 }
 
 impl PyDownloader {
-    fn new(plugin: Arc<Py<PyType>>, url: String, remark: String, cfg: Config) -> Self {
+    fn new(
+        plugin: Arc<Py<PyType>>,
+        url: String,
+        remark: String,
+        cfg: Config,
+        time_range: Option<String>,
+        excluded_keywords: Option<Vec<String>>,
+    ) -> Self {
         Self {
             plugin,
             url: url.clone(),
             remark: remark.clone(),
             danmaku: None,
+            time_range,
+            excluded_keywords,
             cfg: OnceConfig { map: cfg },
         }
     }
 
-    async fn call_via_threads(&mut self) -> AppResult<Option<StreamInfoExt>> {
+    async fn call_via_threads(&mut self) -> AppResult<StreamStatus> {
         let url = self.url.clone();
         let remark = self.remark.clone();
         let obj = self.plugin.clone();
         let config = self.cfg.clone();
-        Ok(
-            match tokio::task::spawn_blocking(move || {
-                Python::attach(
-                    |py| -> PyResult<Option<(StreamInfoExt, Option<Py<PyAny>>)>> {
-                        // 从 biliup.util 获取 loop（按你项目里真实的名字来取）
-                        let util = PyModule::import(py, "biliup.common.util")?;
-                        // 下面两行二选一（取决于 biliup.util 的 API）：
-                        // let loop_obj: Py<PyAny> = util.getattr("loop")?.into_py(py);
-                        // 或：
-                        // let loop_obj: Py<PyAny> = util.call_method0("get_loop")?.into_py(py);
+        let time_range = self.time_range.clone();
+        let excluded_keywords = self.excluded_keywords.clone();
+        let result = tokio::task::spawn_blocking(move || {
+            Python::attach(
+                |py| -> PyResult<(Option<StreamInfoExt>, Option<Py<PyAny>>, Option<String>)> {
+                    // 从 biliup.util 获取 loop（按你项目里真实的名字来取）
+                    let util = PyModule::import(py, "biliup.common.util")?;
+                    // 下面两行二选一（取决于 biliup.util 的 API）：
+                    // let loop_obj: Py<PyAny> = util.getattr("loop")?.into_py(py);
+                    // 或：
+                    // let loop_obj: Py<PyAny> = util.call_method0("get_loop")?.into_py(py);
 
-                        // 这里假设是直接暴露了 util.loop
-                        let loop_obj = util.getattr("loop")?;
+                    // 这里假设是直接暴露了 util.loop
+                    let loop_obj = util.getattr("loop")?;
 
-                        let asyncio = PyModule::import(py, "asyncio")?;
+                    let asyncio = PyModule::import(py, "asyncio")?;
 
-                        // 生成协程 self.acheck_stream()
-                        let instance = obj.bind(py).call1((remark, url, config))?;
-                        let coro = instance.call_method0("acheck_stream")?;
+                    // 生成协程 self.acheck_stream()
+                    let instance = obj.bind(py).call1((remark, url, config))?;
+                    if let Some(time_range) = time_range {
+                        instance.setattr("time_range", time_range)?;
+                    }
+                    if let Some(excluded_keywords) = excluded_keywords {
+                        let list = PyList::new(py, &excluded_keywords)?;
+                        instance.setattr("excluded_keywords", list)?;
+                    }
+                    let coro = instance.call_method0("acheck_stream")?;
 
-                        // 调度到指定 loop
-                        let fut = asyncio
-                            .getattr("run_coroutine_threadsafe")?
-                            .call1((coro, loop_obj))?;
+                    // 调度到指定 loop
+                    let fut = asyncio
+                        .getattr("run_coroutine_threadsafe")?
+                        .call1((coro, loop_obj))?;
 
-                        let res = fut.call_method0("result")?;
-                        let is_live = res.unbind().extract(py)?;
-                        if is_live {
-                            let self_obj = &instance;
-                            // 从 self 上获取属性并抽取为 Rust 类型
-                            let name: String = self_obj.getattr("fname")?.extract()?;
-                            let url: String = self_obj.getattr("url")?.extract()?;
-                            let raw_stream_url: String =
-                                self_obj.getattr("raw_stream_url")?.extract()?;
-                            let title: String = self_obj.getattr("room_title")?.extract()?;
-                            let live_cover_path: Option<String> =
-                                self_obj.getattr("live_cover_url")?.extract()?;
-                            let _is_download: bool = self_obj.getattr("is_download")?.extract()?;
-                            let platform: String = self_obj.getattr("platform")?.extract()?;
-
-                            let stream_headers: HashMap<String, String> = if platform == "Huya" {
-                                let stream_headers = self_obj.getattr("stream_headers")?;
-                                self_obj.call_method1("update_headers", (&stream_headers,))?;
-                                stream_headers.extract()?
-                            } else {
-                                self_obj.getattr("stream_headers")?.extract()?
-                            };
-
-                            let _danmaku_init = self_obj.call_method0("danmaku_init")?;
-                            // let platform: Option<PyAny> = self_obj.getattr("danmaku")?.extract()?;
-                            // danmaku 可能在条件下没有设置（比如 bilibili_danmaku 为 False）
-                            let self_danmaku = self_obj.getattr("danmaku")?;
-                            let danmaku = if !self_danmaku.is_none() {
-                                Some(self_danmaku.unbind())
-                            } else {
-                                None
-                            };
-
-                            Ok(Some((
-                                StreamInfoExt {
-                                    streamer_info: StreamerInfo {
-                                        id: 0,
-                                        name,
-                                        url,
-                                        title,
-                                        date: Utc::now(),
-                                        live_cover_path: live_cover_path.unwrap_or_default(),
-                                    },
-                                    suffix: media_ext_from_url(&raw_stream_url)
-                                        .unwrap_or("flv".to_string()),
-                                    raw_stream_url,
-                                    platform,
-                                    stream_headers,
-                                },
-                                danmaku,
-                            )))
-                        } else {
-                            Ok(None)
+                    let res = fut.call_method0("result")?;
+                    let is_live = res.unbind().extract(py)?;
+                    if is_live {
+                        let self_obj = &instance;
+                        let record_result = self_obj.call_method0("should_record_with_reason");
+                        let (should_record, reason) = match record_result {
+                            Ok(value) => value.extract::<(bool, Option<String>)>()?,
+                            Err(_) => {
+                                let ok: bool = self_obj.call_method0("should_record")?.extract()?;
+                                (ok, None)
+                            }
+                        };
+                        if !should_record {
+                            return Ok((None, None, reason));
                         }
-                    },
-                )
-            })
-            .await
-            .change_context(AppError::Unknown)?
-            .change_context(AppError::Unknown)?
-            {
-                Some((info, Some(danmaku))) => {
-                    self.danmaku = Some(Arc::new(danmaku));
-                    Some(info)
-                }
-                Some((info, None)) => Some(info),
-                None => None,
-            },
-        )
+
+                        // 从 self 上获取属性并抽取为 Rust 类型
+                        let name: String = self_obj.getattr("fname")?.extract()?;
+                        let url: String = self_obj.getattr("url")?.extract()?;
+                        let raw_stream_url: String = self_obj.getattr("raw_stream_url")?.extract()?;
+                        let title: String = self_obj.getattr("room_title")?.extract()?;
+                        let live_cover_path: Option<String> =
+                            self_obj.getattr("live_cover_url")?.extract()?;
+                        let _is_download: bool = self_obj.getattr("is_download")?.extract()?;
+                        let platform: String = self_obj.getattr("platform")?.extract()?;
+
+                        let stream_headers: HashMap<String, String> = if platform == "Huya" {
+                            let stream_headers = self_obj.getattr("stream_headers")?;
+                            self_obj.call_method1("update_headers", (&stream_headers,))?;
+                            stream_headers.extract()?
+                        } else {
+                            self_obj.getattr("stream_headers")?.extract()?
+                        };
+
+                        let _danmaku_init = self_obj.call_method0("danmaku_init")?;
+                        // let platform: Option<PyAny> = self_obj.getattr("danmaku")?.extract()?;
+                        // danmaku 可能在条件下没有设置（比如 bilibili_danmaku 为 False）
+                        let self_danmaku = self_obj.getattr("danmaku")?;
+                        let danmaku = if !self_danmaku.is_none() {
+                            Some(self_danmaku.unbind())
+                        } else {
+                            None
+                        };
+
+                        Ok((
+                            Some(StreamInfoExt {
+                                streamer_info: StreamerInfo {
+                                    id: 0,
+                                    name,
+                                    url,
+                                    title,
+                                    date: Utc::now(),
+                                    live_cover_path: live_cover_path.unwrap_or_default(),
+                                },
+                                suffix: media_ext_from_url(&raw_stream_url)
+                                    .unwrap_or("flv".to_string()),
+                                raw_stream_url,
+                                platform,
+                                stream_headers,
+                            }),
+                            danmaku,
+                            None,
+                        ))
+                    } else {
+                        Ok((None, None, None))
+                    }
+                },
+            )
+        })
+        .await
+        .change_context(AppError::Unknown)?
+        .change_context(AppError::Unknown)?;
+
+        match result {
+            (Some(info), Some(danmaku), _) => {
+                self.danmaku = Some(Arc::new(danmaku));
+                Ok(StreamStatus::Live {
+                    stream_info: Box::new(info),
+                })
+            }
+            (Some(info), None, _) => Ok(StreamStatus::Live {
+                stream_info: Box::new(info),
+            }),
+            (None, _, Some(reason)) => {
+                let parsed = match reason.as_str() {
+                    "time_range" => RecordBlockReason::TimeRange,
+                    "excluded_keywords" => RecordBlockReason::ExcludedKeywords,
+                    _ => {
+                        warn!(reason = reason, "Unknown record block reason");
+                        RecordBlockReason::TimeRange
+                    }
+                };
+                Ok(StreamStatus::Blocked { reason: parsed })
+            }
+            (None, _, None) => Ok(StreamStatus::Offline),
+        }
     }
 }
 
@@ -201,11 +250,24 @@ impl DownloadPlugin for PyPlugin {
     fn create_downloader(&self, ctx: &mut PluginContext) -> Box<dyn DownloadBase> {
         let url = ctx.live_streamer().url.to_string();
         let remark = ctx.live_streamer().remark.to_string();
+        let time_range = ctx.live_streamer().time_range.clone();
+        let excluded_keywords = match &ctx.live_streamer().excluded_keywords {
+            Some(Value::Array(values)) => {
+                let list: Vec<String> = values
+                    .iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect();
+                if list.is_empty() { None } else { Some(list) }
+            }
+            _ => None,
+        };
         Box::new(PyDownloader::new(
             self.plugin.clone(),
             url,
             remark,
             ctx.config(),
+            time_range,
+            excluded_keywords,
         ))
     }
 
@@ -217,12 +279,7 @@ impl DownloadPlugin for PyPlugin {
 #[async_trait]
 impl DownloadBase for PyDownloader {
     async fn check_stream(&mut self) -> Result<StreamStatus, Report<AppError>> {
-        match self.call_via_threads().await? {
-            Some(info) => Ok(StreamStatus::Live {
-                stream_info: Box::new(info),
-            }),
-            None => Ok(StreamStatus::Offline),
-        }
+        Ok(self.call_via_threads().await?)
     }
 
     fn danmaku_init(&self) -> Option<Arc<dyn DanmakuClient + Send + Sync>> {

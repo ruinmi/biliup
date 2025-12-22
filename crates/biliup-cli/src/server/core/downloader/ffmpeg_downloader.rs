@@ -101,7 +101,9 @@ impl FfmpegDownloader {
         // 外部分段特定的输出参数
         // -to: 限制录制时长
         if let Some(segment_time) = &download_config.segment_time {
-            args.extend(["-to".to_string(), segment_time.clone()]);
+            let duration = get_duration(segment_time, download_config.time_range.as_deref());
+            info!("External segment duration: {}", duration);
+            args.extend(["-to".to_string(), duration]);
         }
 
         // -fs: 限制文件大小（字节）
@@ -349,6 +351,98 @@ impl FfmpegDownloader {
     // async fn get_status(&self) -> DownloadStatus {
     //     self.status.read().await.clone()
     // }
+}
+
+fn get_duration(segment_time: &str, time_range: Option<&str>) -> String {
+    let Some(time_range) = time_range else {
+        return segment_time.to_string();
+    };
+
+    let Some((_start, end_time)) = parse_time_range(time_range) else {
+        return segment_time.to_string();
+    };
+
+    let now = Utc::now().time();
+    let now_sec = now.num_seconds_from_midnight() as i64;
+    let end_sec = end_time.num_seconds_from_midnight() as i64;
+
+    let diff = if end_sec >= now_sec {
+        end_sec - now_sec
+    } else {
+        24 * 3600 - now_sec + end_sec
+    };
+
+    let Some(segment_sec) = parse_segment_seconds(segment_time) else {
+        return segment_time.to_string();
+    };
+
+    if diff as u64 > segment_sec {
+        return segment_time.to_string();
+    }
+
+    let hours = diff / 3600;
+    let minutes = (diff % 3600) / 60;
+    let seconds = diff % 60;
+
+    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+}
+
+fn parse_time_range(time_range_str: &str) -> Option<(NaiveTime, NaiveTime)> {
+    let values: Vec<String> = serde_json::from_str(time_range_str).ok()?;
+    if values.len() != 2 {
+        return None;
+    }
+
+    let start = parse_time_value(&values[0])?;
+    let end = parse_time_value(&values[1])?;
+    Some((start, end))
+}
+
+fn parse_time_value(value: &str) -> Option<NaiveTime> {
+    let trimmed = value.trim();
+    if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
+        return Some(dt.time());
+    }
+
+    let replaced = trimmed.replace('Z', "+00:00");
+    if let Ok(dt) = DateTime::parse_from_rfc3339(&replaced) {
+        return Some(dt.time());
+    }
+
+    if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%H:%M:%S") {
+        return Some(t);
+    }
+
+    if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%H:%M") {
+        return Some(t);
+    }
+
+    None
+}
+
+fn parse_segment_seconds(segment_time: &str) -> Option<u64> {
+    let parts: Vec<&str> = segment_time.split(':').collect();
+    if parts.len() != 3 {
+        return None;
+    }
+
+    let hours: u64 = parts[0].parse().ok()?;
+    let minutes: u64 = parts[1].parse().ok()?;
+    let seconds: u64 = parts[2].parse().ok()?;
+    Some(hours * 3600 + minutes * 60 + seconds)
+}
+
+async fn stop_and_wait(process_handle: &RwLock<Option<tokio::process::Child>>) -> AppResult<()> {
+    let mut handle = process_handle.write().await;
+    if let Some(child) = handle.as_mut() {
+        child.kill().await.change_context(AppError::Unknown)?;
+    }
+
+    if let Some(mut child) = handle.take() {
+        let _ = child.wait().await.change_context(AppError::Unknown)?;
+    }
+
+    Ok(())
 }
 
 async fn spawn_log(

@@ -126,6 +126,12 @@ impl Monitor {
                     self.wake_waker(room.id()).await;
                     debug!(url = ctx.live_streamer().url, "未开播")
                 }
+                Ok(StreamStatus::Blocked { reason }) => {
+                    room.change_status(Stage::Download, WorkerStatus::OutOfSchedule(reason))
+                        .await;
+                    self.wake_waker(room.id()).await;
+                    debug!(url = ctx.live_streamer().url, "停止录制")
+                }
                 Err(e) => {
                     self.wake_waker(room.id()).await;
                     error!(e=?e, ctx=ctx.live_streamer().url,"检查直播间出错")
@@ -528,7 +534,12 @@ impl RoomsActor {
         self.platforms
             .get_mut(plugin.name())?
             .push_back(worker.clone());
-        *worker.downloader_status.write().unwrap() = WorkerStatus::Idle;
+        if !matches!(
+            *worker.downloader_status.read().unwrap(),
+            WorkerStatus::OutOfSchedule(_)
+        ) {
+            *worker.downloader_status.write().unwrap() = WorkerStatus::Idle;
+        }
         Some(plugin)
     }
 

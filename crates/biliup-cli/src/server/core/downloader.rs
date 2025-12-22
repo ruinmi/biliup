@@ -24,6 +24,8 @@ pub struct DownloadConfig {
     pub(crate) url: String,
     /// 分段时长 (格式: "HH:MM:SS")
     pub segment_time: Option<String>,
+    /// 录制时间范围 (格式: "HH:MM:SS-HH:MM:SS")
+    pub time_range: Option<String>,
 
     /// 分段文件大小限制 (字节)
     pub file_size: Option<u64>,

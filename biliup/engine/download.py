@@ -63,8 +63,8 @@ class DownloadBase(ABC):
         }
         self.stream_headers = copy.deepcopy(self.fake_headers)
         self.segment_time = config.get('segment_time', '01:00:00')
-        # self.time_range = config.get('time_range')
-        # self.excluded_keywords = config.get('excluded_keywords')
+        self.time_range = None
+        self.excluded_keywords = None
         self.file_size = config.get('file_size')
 
         # 是否是下载模式 跳过下播检测
@@ -88,18 +88,36 @@ class DownloadBase(ABC):
         # is_check 是否是检测模式 检测模式可以忽略只有下载时需要的耗时操作
         raise NotImplementedError()
 
-    def should_record(self):
-        # 检查房间名
-        keywords = self.config['streamers'].get(self.fname, {}).get('excluded_keywords')
+    def should_record_with_reason(self):
+        # Check room title keywords
+        try:
+            streamer_cfg = self.config.get('streamers', {}).get(self.fname, {})
+        except Exception:
+            streamer_cfg = None
+
+        keywords = getattr(self, 'excluded_keywords', None)
+        if not keywords and streamer_cfg:
+            keywords = streamer_cfg.get('excluded_keywords')
+
         if self.room_title and keywords:
             if any(k.strip() in self.room_title for k in keywords):
-                return False
+                return False, 'excluded_keywords'
 
-        # 检查时间范围
-        if not check_timerange(self.fname):
-            return False
+        time_range = getattr(self, 'time_range', None)
+        if not time_range and streamer_cfg:
+            time_range = streamer_cfg.get('time_range')
 
-        return True
+        if time_range:
+            self.time_range = time_range
+            if not check_timerange(time_range):
+                return False, 'time_range'
+
+        return True, None
+
+    def should_record(self):
+        ok, _reason = self.should_record_with_reason()
+        return ok
+
 
     def download(self):
         self.update_headers(self.stream_headers)

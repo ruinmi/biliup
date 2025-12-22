@@ -79,7 +79,7 @@ class Huya(DownloadBase):
             return True
 
         stream_urls = await self.build_stream_urls(room_profile['streams_info'])
-        print(stream_urls)
+        # print(stream_urls)
         cdn_list = list(stream_urls.keys())
         if not self.huya_cdn or self.huya_cdn not in cdn_list:
             self.huya_cdn = cdn_list[0]
@@ -291,7 +291,7 @@ class Huya(DownloadBase):
         tid = HuyaUserId()
         # Generate random sHuYaUA using UAGenerator
         tid.sHuYaUA = UAGenerator.get_random_hyapp_ua()
-        print(f"sHuYaUA: {tid.sHuYaUA}")
+        # print(f"sHuYaUA: {tid.sHuYaUA}")
         wup_req = Wup()
         wup_req.requestid = abs(DEFAULT_TICKET_NUMBER)
         wup_req.servant = servant
@@ -309,7 +309,7 @@ class Huya(DownloadBase):
         url = HUYA_WUP_BASE_URL
         if random.random() > 0.5:
             url = f"{HUYA_WUP_YST_URL}/{servant}/{func}"
-        print(f"send requests to {url}")
+        # print(f"send requests to {url}")
         rsp = await client.post(url, data=data)
         rsp_bytes = rsp.content
         wup_rsp = Wup()
@@ -319,7 +319,7 @@ class Huya(DownloadBase):
             name="tRsp"
         )
         cdn_token_info_ex = getCdnTokenInfoExRsp.as_dict()
-        print(f"{self.plugin_msg}: wup token_info {cdn_token_info_ex}")
+        # print(f"{self.plugin_msg}: wup token_info {cdn_token_info_ex}")
         return cdn_token_info_ex['sFlvToken']
 
 
@@ -359,7 +359,7 @@ class Huya(DownloadBase):
             uid = int(uid) if uid.isdigit() else 0
         if uid == 0:
             uid = self.generate_random_uid()
-        print(f"Using {uid} as uid for calculation")
+        # print(f"Using {uid} as uid for calculation")
         seq_id = uid + int(clac_start_time * 1000)
         secret_hash = hashlib.md5(f"{seq_id}|{ctype}|{platform_id}".encode()).hexdigest()
         convert_uid = rotl64(uid)
