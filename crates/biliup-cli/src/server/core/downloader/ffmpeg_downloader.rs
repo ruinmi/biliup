@@ -3,8 +3,8 @@ use crate::server::core::downloader::{
     DownloadConfig, DownloadStatus, DownloaderType, SegmentEvent, SegmentInfo,
 };
 use crate::server::errors::{AppError, AppResult};
-use error_stack::{ResultExt, bail};
 use chrono::{DateTime, NaiveTime, Timelike, Utc};
+use error_stack::{ResultExt, bail};
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
 use std::sync::Arc;
@@ -103,6 +103,7 @@ impl FfmpegDownloader {
         // -to: 限制录制时长
         if let Some(segment_time) = &download_config.segment_time {
             let duration = get_duration(segment_time, download_config.time_range.as_deref());
+            info!("External segment duration: {}", duration);
             args.extend(["-to".to_string(), duration]);
         }
 
@@ -205,7 +206,30 @@ impl FfmpegDownloader {
 
         let child = cmd.spawn().change_context(AppError::Unknown)?;
 
-        let status = spawn_log(child, &self.process_handle).await?;
+        let timeout_secs = download_config
+            .segment_time
+            .as_ref()
+            .map(|s| get_duration(s, download_config.time_range.as_deref()))
+            .and_then(|duration| parse_segment_seconds(&duration))
+            .map(|secs| secs.saturating_add(2));
+
+        let status = if let Some(timeout_secs) = timeout_secs {
+            match tokio::time::timeout(
+                tokio::time::Duration::from_secs(timeout_secs),
+                spawn_log(child, &self.process_handle),
+            )
+            .await
+            {
+                Ok(result) => Some(result?),
+                Err(_) => {
+                    info!("ffmpeg wall-clock timeout reached; stopping process");
+                    stop_and_wait(&self.process_handle).await?;
+                    None
+                }
+            }
+        } else {
+            Some(spawn_log(child, &self.process_handle).await?)
+        };
         // 退出时，重命名文件
         let part_file = format!("{}.part", output_file.display());
         tokio::fs::rename(&part_file, &output_file)
@@ -221,10 +245,13 @@ impl FfmpegDownloader {
             next_file_path: None,
         }));
         // 根据退出码判断状态
-        match status.code() {
-            Some(0) => Ok(DownloadStatus::SegmentCompleted),
-            Some(255) => Ok(DownloadStatus::StreamEnded),
-            err => Ok(DownloadStatus::Error(format!("FFmpeg error: {err:?}"))),
+        match status {
+            Some(status) => match status.code() {
+                Some(0) => Ok(DownloadStatus::SegmentCompleted),
+                Some(255) => Ok(DownloadStatus::StreamEnded),
+                err => Ok(DownloadStatus::Error(format!("FFmpeg error: {err:?}"))),
+            },
+            None => Ok(DownloadStatus::SegmentCompleted),
         }
     }
 
@@ -430,6 +457,21 @@ fn parse_segment_seconds(segment_time: &str) -> Option<u64> {
     let minutes: u64 = parts[1].parse().ok()?;
     let seconds: u64 = parts[2].parse().ok()?;
     Some(hours * 3600 + minutes * 60 + seconds)
+}
+
+async fn stop_and_wait(
+    process_handle: &RwLock<Option<tokio::process::Child>>,
+) -> AppResult<()> {
+    let mut handle = process_handle.write().await;
+    if let Some(child) = handle.as_mut() {
+        child.kill().await.change_context(AppError::Unknown)?;
+    }
+
+    if let Some(mut child) = handle.take() {
+        let _ = child.wait().await.change_context(AppError::Unknown)?;
+    }
+
+    Ok(())
 }
 
 async fn spawn_log(
