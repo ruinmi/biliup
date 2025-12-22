@@ -107,7 +107,7 @@ impl PyDownloader {
         let result = tokio::task::spawn_blocking(move || {
             Python::attach(
                 |py| -> PyResult<(Option<StreamInfoExt>, Option<Py<PyAny>>, Option<String>)> {
-                    // ? biliup.util ?? loop??????????????
+                    // 从 biliup.util 获取 loop（按你项目里真实的名字来取）
                     let util = PyModule::import(py, "biliup.common.util")?;
                     // 下面两行二选一（取决于 biliup.util 的 API）：
                     // let loop_obj: Py<PyAny> = util.getattr("loop")?.into_py(py);

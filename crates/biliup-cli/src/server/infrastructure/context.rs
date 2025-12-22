@@ -114,6 +114,7 @@ impl Context {
             // 流URL
             url: ext.raw_stream_url.to_string(),
             segment_time: config.segment_time.or_else(default_segment_time),
+            time_range: self.live_streamer().time_range.clone(),
             file_size: Some(config.file_size), // 2GB
             headers: ext.stream_headers.clone(),
             recorder: self.recorder(ext.streamer_info.clone()),
