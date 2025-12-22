@@ -110,7 +110,6 @@ impl Context {
             .format
             .clone()
             .unwrap_or_else(|| ext.suffix.to_string());
-        info!("time_range: {:?}", self.live_streamer().time_range);
         DownloadConfig {
             // 流URL
             url: ext.raw_stream_url.to_string(),

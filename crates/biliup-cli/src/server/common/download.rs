@@ -14,6 +14,7 @@ use crate::server::infrastructure::models::hook_step::process;
 use async_channel::{Receiver, Sender};
 use error_stack::{ResultExt, bail};
 use reqwest::header::{HeaderMap, HeaderValue, USER_AGENT};
+use serde_json;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -386,7 +387,15 @@ impl DActor {
                     )
                     .await;
 
-                process(&[], &ctx.live_streamer().downloaded_processor).await;
+                let downloaded_input = match serde_json::to_vec(&ctx.stream_info_ext().streamer_info)
+                {
+                    Ok(value) => value,
+                    Err(e) => {
+                        error!(error = ?e, "Failed to serialize streamer_info for hooks");
+                        Vec::new()
+                    }
+                };
+                process(&downloaded_input, &ctx.live_streamer().downloaded_processor).await;
 
                 info!(
                     "Download workflow completed {} => {:?}",
