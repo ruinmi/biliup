@@ -96,7 +96,7 @@ impl Probe {
                 .is_success()
             {
                 line.cost = instant.elapsed().as_millis();
-                info!("{}: {}", line.query, line.cost);
+                // info!("{}: {}", line.query, line.cost);
                 if choice_line.cost > line.cost {
                     choice_line = line
                 }
@@ -146,7 +146,7 @@ impl Line {
             "build": 2140000,
             "size": total_size,
         });
-        info!("pre_upload: {}", params);
+        // info!("pre_upload: {}", params);
 
         let response = bili
             .client

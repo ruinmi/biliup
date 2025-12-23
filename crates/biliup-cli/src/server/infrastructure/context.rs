@@ -237,7 +237,7 @@ pub fn find_worker(workers: &[Arc<Worker>], id: i64) -> Option<&Arc<Worker>> {
 impl Drop for Worker {
     /// 工作器销毁时的清理逻辑
     fn drop(&mut self) {
-        info!("Dropping worker {}", self.live_streamer.id);
+        // info!("Dropping worker {}", self.live_streamer.id);
     }
 }
 

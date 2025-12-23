@@ -164,7 +164,7 @@ async fn upload_single_file(file_path: &Path, context: &UploadContext) -> AppRes
             .change_context(AppError::Unknown)?
             .to_str()
     );
-    info!("线路选择：{line:?}");
+    // info!("线路选择：{line:?}");
     let video_file = VideoFile::new(video_path).change_context(AppError::Unknown)?;
     let total_size = video_file.total_size;
     let file_name = video_file.file_name.clone();
@@ -332,7 +332,7 @@ pub async fn upload(
                 .change_context_lazy(|| AppError::Unknown)?
                 .to_str()
         );
-        info!("{line:?}");
+        // info!("{line:?}");
         let video_file = VideoFile::new(video_path).change_context_lazy(|| AppError::Unknown)?;
         let total_size = video_file.total_size;
         let file_name = video_file.file_name.clone();

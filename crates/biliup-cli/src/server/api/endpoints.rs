@@ -119,7 +119,7 @@ pub async fn put_streamers_endpoint(
         .ok_or(AppError::Unknown)
         .map_err(report_to_response)?;
 
-    info!(id = id, "successfully update live streamers");
+    // info!(id = id, "successfully update live streamers");
     Ok(Json(streamer))
 }
 
