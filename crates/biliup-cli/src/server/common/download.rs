@@ -140,7 +140,7 @@ impl DownloadTask {
         // 启动弹幕客户端
         if let Some(ref client) = danmaku_client {
             // 启动弹幕下载逻辑
-            info!("Starting danmaku client for stream: {}", url);
+            // info!("Starting danmaku client for stream: {}", url);
             client.download().await?;
         }
 
@@ -159,7 +159,7 @@ impl DownloadTask {
                 )
                 .await;
 
-            info!("initialize_components completed: {url}");
+            // info!("initialize_components completed: {url}");
 
             if self.token.is_cancelled() {
                 info!(url = url, "task is cancelled");
@@ -169,10 +169,10 @@ impl DownloadTask {
             match plugin.check_stream().await {
                 Ok(StreamStatus::Live { stream_info }) => {
                     stream_info_ext = *stream_info;
-                    info!(
-                        url = url,
-                        "Stream is still live, preparing to retry. attempt: {}", retry_count
-                    );
+                    // info!(
+                    //     url = url,
+                    //     "Stream is still live, preparing to retry. attempt: {}", retry_count
+                    // );
                     // 成功下载后重置计数
                     retry_count = 0;
                 }
@@ -196,19 +196,19 @@ impl DownloadTask {
             }
 
             if retry_count >= max_retries {
-                warn!(
-                    url = url,
-                    "Maximum retry attempts ({}) reached, stopping", max_retries
-                );
+                // warn!(
+                //     url = url,
+                //     "Maximum retry attempts ({}) reached, stopping", max_retries
+                // );
                 break components;
             }
 
-            info!(
-                url = url,
-                "preparing to retry. Attempt: {}/{}",
-                retry_count + 1,
-                max_retries
-            );
+            // info!(
+            //     url = url,
+            //     "preparing to retry. Attempt: {}/{}",
+            //     retry_count + 1,
+            //     max_retries
+            // );
 
             // 计算指数退避延迟: delay = base_delay * 2^retry_count
             let delay = if retry_count != 0 {
@@ -218,7 +218,7 @@ impl DownloadTask {
             };
             let delay = delay.min(max_delay); // 限制最大延迟时间
 
-            info!("Retrying download in {:?}...", delay);
+            // info!("Retrying download in {:?}...", delay);
             tokio::time::sleep(delay).await;
         };
         // 异步清理任务
@@ -290,7 +290,7 @@ impl DownloadTask {
             .change_context(AppError::Custom("Failed to download segment".into()))?;
 
         // 处理结果
-        info!(url=streamer.url,result=?result, "finished downloading");
+        // info!(url=streamer.url,result=?result, "finished downloading");
         Ok(result)
     }
 

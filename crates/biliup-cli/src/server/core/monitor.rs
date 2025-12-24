@@ -140,7 +140,7 @@ impl Monitor {
             // 等待下一次检查
             tokio::time::sleep(Duration::from_secs(interval)).await;
         }
-        info!("exit -> [{platform_name}]")
+        // info!("exit -> [{platform_name}]")
     }
 
     /// 添加工作器到房间列表
