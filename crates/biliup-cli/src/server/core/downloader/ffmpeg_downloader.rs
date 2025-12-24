@@ -103,7 +103,10 @@ impl FfmpegDownloader {
         // -to: 限制录制时长
         if let Some(segment_time) = &download_config.segment_time {
             let duration = get_duration(segment_time, download_config.time_range.as_deref());
-            info!("External segment duration: {}", duration);
+            info!(
+                "Duration: {} for {}",
+                duration, download_config.recorder.streamer_info.name
+            );
             args.extend(["-to".to_string(), duration]);
         }
 
