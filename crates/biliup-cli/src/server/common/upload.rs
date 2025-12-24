@@ -47,7 +47,7 @@ pub async fn process_with_upload<F>(
 where
     F: FnMut(&SegmentInfo),
 {
-    info!(upload_config=?upload_config, "Starting process with upload");
+    // info!(upload_config=?upload_config, "Starting process with upload");
     // 1. 初始化上传环境
     let upload_context =
         initialize_upload_context(&ctx.config(), &ctx.stateless_client(), upload_config).await?;
@@ -422,10 +422,10 @@ impl UActor {
                 };
 
                 if let Err(e) = &result {
-                    error!("Process segment event failed: {}", e);
+                    // error!("Process segment event failed: {}", e);
                     // 可以添加错误通知机制
                 }
-                info!(url=ctx.live_streamer().url, result=?result, "后处理执行完毕：Finished processing segment event");
+                info!(url=ctx.live_streamer().url, "后处理执行完毕：");
                 ctx.change_status(Stage::Upload, WorkerStatus::Idle).await;
             }
         }

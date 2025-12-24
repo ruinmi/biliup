@@ -230,7 +230,7 @@ impl DownloadTask {
         // 清理资源
         // 确保状态更新和资源清理
         rooms_handle.wake_waker(ctx.worker_id()).await;
-        info!("Download task completed: {:?}", result);
+        // info!("Download task completed: {:?}", result);
         self.done_notify.notify_one();
         Ok(())
     }
