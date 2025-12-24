@@ -177,7 +177,7 @@ impl DownloadTask {
                     retry_count = 0;
                 }
                 Ok(StreamStatus::Blocked { reason }) => {
-                    retry_count += 1;
+                    retry_count += max_retries;
                     info!(url = url, reason = ?reason, "Stream blocked by record policy, stopping download");
                 }
                 Ok(StreamStatus::Offline) => {
