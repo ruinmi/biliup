@@ -98,13 +98,13 @@ impl HookStep {
                     tokio::select! {
                         line = stdout_lines.next_line() => {
                             match line.change_context(AppError::Unknown)? {
-                                Some(l) => tracing::info!(target="user_cmd_stdout", "{}", l),
+                                Some(l) => tracing::info!("{}", l),
                                 None => break, // stdout EOF
                             }
                         }
                         line = stderr_lines.next_line() => {
                             match line.change_context(AppError::Unknown)? {
-                                Some(l) => tracing::warn!(target="user_cmd_stderr", "{}", l),
+                                Some(l) => tracing::warn!("{}", l),
                                 None => break, // stderr EOF
                             }
                         }
