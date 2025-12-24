@@ -433,19 +433,6 @@ fn parse_segment_seconds(segment_time: &str) -> Option<u64> {
     Some(hours * 3600 + minutes * 60 + seconds)
 }
 
-async fn stop_and_wait(process_handle: &RwLock<Option<tokio::process::Child>>) -> AppResult<()> {
-    let mut handle = process_handle.write().await;
-    if let Some(child) = handle.as_mut() {
-        child.kill().await.change_context(AppError::Unknown)?;
-    }
-
-    if let Some(mut child) = handle.take() {
-        let _ = child.wait().await.change_context(AppError::Unknown)?;
-    }
-
-    Ok(())
-}
-
 async fn spawn_log(
     mut child: tokio::process::Child,
     process_handle: &RwLock<Option<tokio::process::Child>>,
