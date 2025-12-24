@@ -135,15 +135,21 @@ impl HookStep {
     /// * `cmd` - 要执行的命令字符串
     /// * `video_paths` - 视频文件路径列表
     async fn execute_command(&self, cmd: &str, video_paths: &[&Path]) -> AppResult<()> {
-        // 解析命令和参数
-        let parts: Vec<&str> = cmd.split_whitespace().collect();
-        if parts.is_empty() {
+        if cmd.trim().is_empty() {
             bail!(AppError::Custom("Empty command".into()));
         }
 
+        // 走 shell，支持引号/管道/重定向
+        let (shell, flag) = if cfg!(target_os = "windows") {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+
         // 启动子进程，配置标准输入管道
-        let mut process = Command::new(parts[0])
-            .args(&parts[1..])
+        let mut process = Command::new(shell)
+            .arg(flag)
+            .arg(cmd)
             .stdin(std::process::Stdio::piped())
             .spawn()
             .change_context(AppError::Unknown)?;
@@ -281,7 +287,7 @@ impl HookStep {
 /// * `video_path` - 视频文件路径列表
 /// * `processors` - 处理器步骤列表
 pub async fn process_video(video_path: &[&Path], processors: &[HookStep]) -> AppResult<()> {
-    info!("Starting video processing...");
+    // info!("Starting video processing...");
 
     // 依次执行每个处理器步骤
     for processor in processors {
