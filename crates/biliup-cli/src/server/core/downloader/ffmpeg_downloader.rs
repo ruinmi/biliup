@@ -370,7 +370,7 @@ fn get_duration(segment_time: &str, time_range: Option<&str>) -> String {
     let now_sec = now.num_seconds_from_midnight() as i64;
     let end_sec = end_time.num_seconds_from_midnight() as i64;
 
-    let diff = if end_sec >= now_sec {
+    let mut diff = if end_sec >= now_sec {
         end_sec - now_sec
     } else {
         24 * 3600 - now_sec + end_sec
@@ -383,6 +383,8 @@ fn get_duration(segment_time: &str, time_range: Option<&str>) -> String {
     if diff as u64 > segment_sec {
         return segment_time.to_string();
     }
+
+    diff = diff + 10;
 
     let hours = diff / 3600;
     let minutes = (diff % 3600) / 60;
