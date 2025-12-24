@@ -362,7 +362,7 @@ impl BiliBili {
             .await?
             .json()
             .await?;
-        info!("{:?}", ret);
+        // info!("{:?}", ret);
         if ret.code == 0 {
             info!("APP接口投稿成功");
             Ok(ret)

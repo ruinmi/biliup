@@ -193,7 +193,7 @@ impl HookStep {
             // 移动对应的 XML 文件
             let xml_path = video_path.with_extension("xml");
             if xml_path.exists() {
-                info!("移动弹幕文件: {}", xml_path.display());
+                // info!("移动弹幕文件: {}", xml_path.display());
                 self.move_single_file(&xml_path, target_path).await?;
             }
         }

@@ -226,7 +226,7 @@ pub async fn submit_to_bilibili(
             .await
             .change_context(AppError::Unknown)?,
     };
-    info!("Submit successful");
+    // info!("Submit successful");
     Ok(result)
 }
 
@@ -405,7 +405,7 @@ impl UActor {
                         }
                         .insert(&pool)
                         .await;
-                        info!(result=?result, "Insert file");
+                        // info!(result=?result, "Insert file");
                     });
                 });
                 let result = match ctx.upload_config() {
