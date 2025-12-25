@@ -294,7 +294,7 @@ pub async fn process_video(video_path: &[&Path], processors: &[HookStep]) -> App
         processor.execute(video_path).await?;
     }
 
-    info!("Video processing completed");
+    // info!("Video processing completed");
     Ok(())
 }
 
@@ -302,11 +302,11 @@ pub async fn process(input: &[u8], processors: &Option<Vec<HookStep>>) {
     if let Some(hooks) = processors {
         // 依次执行每个处理器步骤
         for processor in hooks {
-            info!(processor=?processor, "Starting processing...");
+            info!(cmd=%processor.run);
             if let Err(e) = processor.execute_with(input).await {
                 error!(error=?e, "自定义处理执行出错");
             }
-            info!(processor=?processor, "processing completed");
+            // info!(processor=?processor, "processing completed");
         }
     }
 }

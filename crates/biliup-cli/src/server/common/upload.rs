@@ -158,11 +158,12 @@ async fn upload_single_file(file_path: &Path, context: &UploadContext) -> AppRes
     } = context;
 
     info!(
-        "开始上传文件：{:?}",
+        "开始上传：{:?}",
         video_path
             .canonicalize()
             .change_context(AppError::Unknown)?
             .to_str()
+            .unwrap()
     );
     // info!("线路选择：{line:?}");
     let video_file = VideoFile::new(video_path).change_context(AppError::Unknown)?;
@@ -187,7 +188,7 @@ async fn upload_single_file(file_path: &Path, context: &UploadContext) -> AppRes
         .change_context(AppError::Unknown)?;
     let t = instant.elapsed().as_millis();
     info!(
-        "Upload completed: {file_name} => cost {:.2}s, {:.2} MB/s.",
+        "上传完成: {file_name} => cost {:.2}s, {:.2} MB/s.",
         t as f64 / 1000.,
         total_size as f64 / 1000. / t as f64
     );

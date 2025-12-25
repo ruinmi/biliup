@@ -183,7 +183,7 @@ impl DownloadTask {
                 Ok(StreamStatus::Offline) => {
                     retry_count += 1;
                     // 继续循环，重新执行下载
-                    info!(url = url, "Stream went offline, stopping download");
+                    // info!(url = url, "Stream went offline, stopping download");
                 }
                 Err(e) => {
                     retry_count += 1;
@@ -397,11 +397,11 @@ impl DActor {
                 };
                 process(&downloaded_input, &ctx.live_streamer().downloaded_processor).await;
 
-                info!(
-                    "Download workflow completed {} => {:?}",
-                    ctx.live_streamer().url,
-                    ctx.status(Stage::Download)
-                );
+                // info!(
+                //     "Download workflow completed {} => {:?}",
+                //     ctx.live_streamer().url,
+                //     ctx.status(Stage::Download)
+                // );
             }
         }
     }

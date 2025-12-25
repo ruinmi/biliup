@@ -75,7 +75,7 @@ impl Monitor {
         platform_name: &str,
         plugin: Arc<dyn DownloadPlugin + Send + Sync>,
     ) {
-        info!("start -> [{platform_name}]");
+        // info!("start -> [{platform_name}]");
         // 获取下一个要检查的房间
         while let Some(room) = self.next(platform_name).await {
             // 更新状态为等待中
