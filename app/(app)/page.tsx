@@ -1,13 +1,16 @@
 'use client'
 
-const Home: React.FC = () => (
-  <iframe
-    style={{
-      borderWidth: 0,
-    }}
-    height="100%"
-    src="https://biliup.github.io/biliup/docs/guide/changelog/"
-  ></iframe>
-)
+import { useEffect } from 'react'
+import { useRouter } from 'next/navigation'
+
+const Home: React.FC = () => {
+  const router = useRouter()
+
+  useEffect(() => {
+    router.replace('/streamers')
+  }, [router])
+
+  return null
+}
 
 export default Home
