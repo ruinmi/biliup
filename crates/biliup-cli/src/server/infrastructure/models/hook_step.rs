@@ -302,7 +302,11 @@ pub async fn process(input: &[u8], processors: &Option<Vec<HookStep>>) {
     if let Some(hooks) = processors {
         // 依次执行每个处理器步骤
         for processor in hooks {
-            info!(cmd=%processor.run);
+            match processor {
+                HookStep::Run { run } => info!(cmd=%run),
+                HookStep::Move { mv } => info!(cmd=%mv),
+                HookStep::Remove(s) => info!(cmd=%s),
+            }
             if let Err(e) = processor.execute_with(input).await {
                 error!(error=?e, "自定义处理执行出错");
             }
