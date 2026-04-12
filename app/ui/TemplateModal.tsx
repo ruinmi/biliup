@@ -363,12 +363,22 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                     </Button>
                     {arrayFields.map(({ field, key, remove }, i) => (
                       <div key={key} style={{ width: 1000, display: 'flex' }}>
+                        <Form.Select
+                            field={`${field}.cmd`}
+                            label="操作"
+                            rules={[{ required: true, message }]}
+                            noLabel
+                        >
+                          <Form.Select.Option value="run">run（运行）</Form.Select.Option>
+                          <Form.Select.Option value="webhook">webhook</Form.Select.Option>
+                        </Form.Select>
                         <Form.Input
-                          field={`${field}[run]`}
-                          label={`run = `}
-                          labelPosition="inset"
-                          rules={[{ required: true, message }]}
-                          style={{ width: 400, marginRight: 16 }}
+                            field={`${field}.value`}
+                            label="="
+                            labelPosition="inset"
+                            rules={[{ required: true, message }]}
+                            style={{ width: 300, marginRight: 16 }}
+                            placeholder={ api.current?.getValue(field)?.cmd === 'webhook' ? 'https://example.com/notify' : undefined }
                         ></Form.Input>
                         <Button
                           type="danger"
