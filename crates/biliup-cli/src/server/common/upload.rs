@@ -426,7 +426,7 @@ impl UActor {
                     // error!("Process segment event failed: {}", e);
                     // 可以添加错误通知机制
                 }
-                info!(url=ctx.live_streamer().url, "后处理执行完毕：");
+                info!(url = ctx.live_streamer().url, "后处理执行完毕：");
                 ctx.change_status(Stage::Upload, WorkerStatus::Idle).await;
             }
         }

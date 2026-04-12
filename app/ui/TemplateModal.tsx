@@ -31,9 +31,9 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
   const maskStyle = isOpen
     ? {}
     : {
-      WebkitMaskImage:
-        'linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 1) 60%, rgba(0, 0, 0, 0.2) 80%, transparent 100%)',
-    }
+        WebkitMaskImage:
+          'linear-gradient(to bottom, black 0%, rgba(0, 0, 0, 1) 60%, rgba(0, 0, 0, 0.2) 80%, transparent 100%)',
+      }
 
   const collapsed = (
     <div className="semi-form-field-extra">
@@ -46,16 +46,16 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
       <br />
       <code>run = echo hello!</code> 使用当前运行用户在 shell 执行任意命令，
       <br />
-      <code>webhook = url</code>
-      不填写则是默认的逻辑，上传失败后重试直至达到最大重试次数
+      <code>webhook = url</code> 以 POST 调用指定地址
       <br />
-      填写后，<strong>是否上传成功的判断由WebHook给出</strong>，但失败最大重试次数仍会被限制（前往空间配置-上传重试次数限制处配置）
+      <code>postprocessor</code> 中的 webhook
+      会在上传完成后执行；未配置上传模板时，则在录制完成后执行
       <br />
-      上传任务完成后，会将主播信息、稿件信息、捕获的异常等以post模式发送给WebHook，<strong>当WebHook返回success字符串时视为上传成功</strong>，执行正常后处理流程，否则返回其他任意内容或请求失败均尝试重新上传
+      请求体为换行分隔的视频文件路径列表；返回 HTTP 2xx 视为成功，非 2xx 视为失败
       <br />
       <Text type="danger">注意风险。</Text>视频文件路径作为标准输入传入
       <br />
-       TODO: 在这里塞插件仓库
+      TODO: 在这里塞插件仓库
     </div>
   )
   const toggle = () => {
@@ -116,7 +116,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
   })
 
   try {
-    if (entity && entity.time_range && typeof entity.time_range === "string") {
+    if (entity && entity.time_range && typeof entity.time_range === 'string') {
       const tr: string[] = JSON.parse(entity.time_range)
       entity.time_range = tr.map(t => new Date(t))
     }
@@ -156,9 +156,9 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
           />
 
           <Form.Input
-              field="filename_prefix"
-              label="文件名模板（可选）"
-              placeholder="{streamer}%Y-%m-%dT%H_%M_%S"
+            field="filename_prefix"
+            label="文件名模板（可选）"
+            placeholder="{streamer}%Y-%m-%dT%H_%M_%S"
           />
 
           <Form.Select
@@ -201,7 +201,11 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                         labelPosition="inset"
                         rules={[{ required: true, message }]}
                         style={{ width: 300, marginRight: 16 }}
-                        placeholder={ api.current?.getValue(field)?.cmd === 'webhook' ? 'https://example.com/notify' : undefined }
+                        placeholder={
+                          api.current?.getValue(field)?.cmd === 'webhook'
+                            ? 'https://example.com/notify'
+                            : undefined
+                        }
                       ></Form.Input>
                     ) : null}
                     <Button
@@ -242,7 +246,8 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                 placeholder=" "
                 extraText={
                   <div style={{ fontSize: '14px' }}>
-                    如果设置了录制时间范围，不在时间范围内，将不进行录制<br />
+                    如果设置了录制时间范围，不在时间范围内，将不进行录制
+                    <br />
                     下载器需使用ffmpeg或streamlink
                   </div>
                 }
@@ -254,7 +259,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                     marginBottom: '4px',
                     paddingBottom: '8px',
                     borderBottom: '1px solid var(--semi-color-border)',
-                  }
+                  },
                 }}
                 style={{ width: 176 }}
               />
@@ -263,8 +268,10 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                 {({ add, arrayFields }) => (
                   <Form.Section text="不录制关键词">
                     <div className="semi-form-field-extra">
-                      如果房间名包含关键词，则停止或不录制该场直播，每个关键词需单独一行<br />
-                      暂不支持<strong>cc直播</strong>、<strong>yy直播</strong>、<strong>twitch直播</strong>
+                      如果房间名包含关键词，则停止或不录制该场直播，每个关键词需单独一行
+                      <br />
+                      暂不支持<strong>cc直播</strong>、<strong>yy直播</strong>、
+                      <strong>twitch直播</strong>
                     </div>
                     <Button icon={<IconPlusCircle />} onClick={add} theme="light">
                       添加关键词
@@ -356,7 +363,9 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                 {({ add, arrayFields }) => (
                   <Form.Section text="下载后处理">
                     <div className="semi-form-field-extra">
-                      准备上传直播时触发，将按自定义顺序执行自定义操作，仅支持shell指令，如果对上传的视频进行修改，需要保证和filename_prefix命名规则一致，会自动检测上传
+                      准备上传直播时触发，将按自定义顺序执行自定义操作，支持 shell 指令和 webhook。
+                      webhook 会以 POST 发送主播信息 JSON；返回 HTTP 2xx 视为成功。
+                      如果对上传的视频进行修改，需要保证和filename_prefix命名规则一致，会自动检测上传
                     </div>
                     <Button icon={<IconPlusCircle />} onClick={add} theme="light">
                       添加行
@@ -364,21 +373,25 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                     {arrayFields.map(({ field, key, remove }, i) => (
                       <div key={key} style={{ width: 1000, display: 'flex' }}>
                         <Form.Select
-                            field={`${field}.cmd`}
-                            label="操作"
-                            rules={[{ required: true, message }]}
-                            noLabel
+                          field={`${field}.cmd`}
+                          label="操作"
+                          rules={[{ required: true, message }]}
+                          noLabel
                         >
                           <Form.Select.Option value="run">run（运行）</Form.Select.Option>
                           <Form.Select.Option value="webhook">webhook</Form.Select.Option>
                         </Form.Select>
                         <Form.Input
-                            field={`${field}.value`}
-                            label="="
-                            labelPosition="inset"
-                            rules={[{ required: true, message }]}
-                            style={{ width: 300, marginRight: 16 }}
-                            placeholder={ api.current?.getValue(field)?.cmd === 'webhook' ? 'https://example.com/notify' : undefined }
+                          field={`${field}.value`}
+                          label="="
+                          labelPosition="inset"
+                          rules={[{ required: true, message }]}
+                          style={{ width: 300, marginRight: 16 }}
+                          placeholder={
+                            api.current?.getValue(field)?.cmd === 'webhook'
+                              ? 'https://example.com/notify'
+                              : undefined
+                          }
                         ></Form.Input>
                         <Button
                           type="danger"

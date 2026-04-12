@@ -1,30 +1,115 @@
 'use client'
 import {
-    Layout,
-    Nav,
-    Button,
-    Tag,
-    Typography,
-    Popconfirm,
-    Notification,
-    Card, Dropdown, Badge,
+  Layout,
+  Nav,
+  Button,
+  Tag,
+  Typography,
+  Popconfirm,
+  Notification,
+  Card,
+  Dropdown,
+  Badge,
 } from '@douyinfe/semi-ui'
 import {
-    IconHelpCircle,
-    IconPlusCircle,
-    IconVideoListStroked,
-    IconEdit2Stroked,
-    IconDeleteStroked,
-    IconWrench, IconTreeTriangleDown, IconPause, IconPlay, IconLock, IconUpload,
+  IconHelpCircle,
+  IconPlusCircle,
+  IconVideoListStroked,
+  IconEdit2Stroked,
+  IconDeleteStroked,
+  IconWrench,
+  IconTreeTriangleDown,
+  IconPause,
+  IconPlay,
+  IconLock,
+  IconUpload,
 } from '@douyinfe/semi-icons'
 import { List, ButtonGroup } from '@douyinfe/semi-ui'
 import React, { useState } from 'react'
 import useStreamers from '../../lib/use-streamers'
 import TemplateModal from '../../ui/TemplateModal'
 import OverrideModal from '../../ui/OverrideModal'
-import { LiveStreamerEntity, put, requestDelete, sendRequest } from '../../lib/api-streamer'
+import {
+  HookFormCommand,
+  HookFormStep,
+  LiveStreamerEntity,
+  put,
+  requestDelete,
+  sendRequest,
+} from '../../lib/api-streamer'
 import useSWRMutation from 'swr/mutation'
-import {PauseButton} from "@/app/ui/StreamerActions/PauseButton";
+import { PauseButton } from '@/app/ui/StreamerActions/PauseButton'
+
+type HookUiStep =
+  | HookFormStep
+  | 'rm'
+  | {
+      run: string
+    }
+  | {
+      mv: string
+    }
+  | {
+      webhook: string
+    }
+
+const isHookFormCommand = (value: unknown): value is HookFormCommand =>
+  value === 'run' || value === 'mv' || value === 'rm' || value === 'webhook'
+
+const normalizeHookSteps = (steps?: HookUiStep[]): HookUiStep[] | undefined =>
+  steps?.map(step => {
+    if (step === 'rm') {
+      return { cmd: 'rm' as const }
+    }
+
+    if (!step || typeof step !== 'object') {
+      return step
+    }
+
+    const formStep = step as HookFormStep
+    if (isHookFormCommand(formStep.cmd)) {
+      return formStep
+    }
+
+    const [cmd, value] = Object.entries(step)[0] ?? []
+    if (!isHookFormCommand(cmd)) {
+      return step
+    }
+
+    return value === undefined ? { cmd } : { cmd, value: String(value) }
+  })
+
+const serializeHookSteps = (steps?: HookUiStep[]): HookUiStep[] | undefined =>
+  steps?.map(step => {
+    if (!step || typeof step !== 'object') {
+      return step
+    }
+
+    const formStep = step as HookFormStep
+    if (!isHookFormCommand(formStep.cmd)) {
+      return step
+    }
+
+    if (formStep.cmd === 'rm') {
+      return 'rm'
+    }
+
+    return { [formStep.cmd]: formStep.value ?? '' } as HookUiStep
+  })
+
+const normalizeHookFields = (values: LiveStreamerEntity): LiveStreamerEntity => ({
+  ...values,
+  downloaded_processor: normalizeHookSteps(values.downloaded_processor as HookUiStep[] | undefined),
+  postprocessor: normalizeHookSteps(values.postprocessor as HookUiStep[] | undefined),
+})
+
+const serializeHookFields = (values: any) => ({
+  ...values,
+  downloaded_processor: serializeHookSteps(
+    values?.downloaded_processor as HookUiStep[] | undefined
+  ),
+  postprocessor: serializeHookSteps(values?.postprocessor as HookUiStep[] | undefined),
+})
 
 export default function Home() {
   const { Header, Content } = Layout
@@ -36,23 +121,6 @@ export default function Home() {
 
   const onConfirm = async (id: number) => {
     await deleteStreamers(id)
-  }
-  const handleEntityPostprocessor = (values: any) => {
-    if (values?.postprocessor) {
-      values.postprocessor = values.postprocessor.map(
-        (element: { [key: string]: string } | string) => {
-          if (element === 'rm') {
-            return { cmd: 'rm' }
-          } else if (typeof element === 'object' && !element.cmd) {
-            const [key, value] = Object.entries(element)[0]
-            return { cmd: key, value: value }
-          }
-          return element
-        }
-      )
-      // console.log(values.postprocessor);
-    }
-    return values
   }
   const data: LiveStreamerEntity[] | undefined = streamers?.map(live => {
     let statusTag
@@ -77,15 +145,11 @@ export default function Home() {
         statusTag = <Tag color="pink">暂停中</Tag>
         break
     }
-    return { ...handleEntityPostprocessor(live), statusTag }
+    return { ...normalizeHookFields(live), statusTag }
   })
 
   const handleOk = async (values: any) => {
-    if (values?.postprocessor) {
-      values.postprocessor = values.postprocessor.map(
-        ({ cmd, value }: { cmd: string; value: string }) => (cmd === 'rm' ? 'rm' : { [cmd]: value })
-      )
-    }
+    values = serializeHookFields(values)
     try {
       const res = await trigger(values)
     } catch (e: any) {
@@ -99,15 +163,11 @@ export default function Home() {
   }
 
   const handleUpdate = async (values: any) => {
-    console.log(values);
+    console.log(values)
     delete values.status
     delete values.statusTag
     delete values.upload_status
-    if (values?.postprocessor) {
-      values.postprocessor = values.postprocessor.map(
-        ({ cmd, value }: { cmd: string; value: string }) => (cmd === 'rm' ? 'rm' : { [cmd]: value })
-      )
-    }
+    values = serializeHookFields(values)
     try {
       const res = await updateStreamers(values)
     } catch (e: any) {
@@ -225,7 +285,9 @@ export default function Home() {
                   <div style={{ position: 'absolute', right: 20, top: 9 }}>{item.statusTag}</div>
 
                   <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                      {item.upload_status === "Pending" ? <Badge count={<IconUpload />}> </Badge> : null}
+                    {item.upload_status === 'Pending' ? (
+                      <Badge count={<IconUpload />}> </Badge>
+                    ) : null}
 
                     <h3
                       style={{
@@ -239,7 +301,6 @@ export default function Home() {
                     >
                       {item.remark}
                     </h3>
-
                   </div>
 
                   <Text style={{ width: '101%' }} ellipsis={{ showTooltip: true }} type="tertiary">
@@ -262,7 +323,7 @@ export default function Home() {
                         <Button theme="borderless" icon={<IconEdit2Stroked />}></Button>
                       </TemplateModal>
                       <span className="semi-button-group-line semi-button-group-line-borderless semi-button-group-line-primary"></span>
-                      <PauseButton streamer={item}/>
+                      <PauseButton streamer={item} />
                       <span className="semi-button-group-line semi-button-group-line-borderless semi-button-group-line-primary"></span>
                       <Popconfirm
                         title="确定是否要删除？"
@@ -279,7 +340,6 @@ export default function Home() {
                     </ButtonGroup>
                   </div>
                 </Card>
-
               </List.Item>
             )}
           />

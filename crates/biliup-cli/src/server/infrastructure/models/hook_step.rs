@@ -1,7 +1,6 @@
 use crate::server::errors::{AppError, AppResult};
 use error_stack::{ResultExt, bail};
 use serde::{Deserialize, Serialize};
-use std::borrow::Cow;
 use std::path::Path;
 use tokio::fs;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -11,14 +10,73 @@ use tracing::{error, info};
 /// 钩子步骤枚举：支持多种操作格式
 /// 既支持 key-value 形式（如 {run: "..."}），也支持纯字符串（如 "rm"）
 #[derive(PartialEq, Debug, Clone, Serialize, Deserialize)]
-#[serde(untagged)]
+#[serde(try_from = "HookStepDef", into = "HookStepDef")]
 pub enum HookStep {
     /// 执行命令格式：{run: "command"}
     Run { run: String },
     /// 移动文件格式：{mv: "target_dir"}
     Move { mv: String },
+    /// WebHook 格式：{webhook: "https://example.com/hook"}
+    Webhook { webhook: String },
     /// 删除文件格式："rm"
     Remove(String),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+enum HookStepDef {
+    Run {
+        run: String,
+    },
+    Move {
+        mv: String,
+    },
+    Webhook {
+        webhook: String,
+    },
+    CommandValue {
+        cmd: String,
+        #[serde(default)]
+        value: Option<String>,
+    },
+    Remove(String),
+}
+
+impl TryFrom<HookStepDef> for HookStep {
+    type Error = String;
+
+    fn try_from(value: HookStepDef) -> Result<Self, Self::Error> {
+        match value {
+            HookStepDef::Run { run } => Ok(HookStep::Run { run }),
+            HookStepDef::Move { mv } => Ok(HookStep::Move { mv }),
+            HookStepDef::Webhook { webhook } => Ok(HookStep::Webhook { webhook }),
+            HookStepDef::Remove(cmd) => Ok(HookStep::Remove(cmd)),
+            HookStepDef::CommandValue { cmd, value } => match cmd.as_str() {
+                "run" => Ok(HookStep::Run {
+                    run: value.ok_or_else(|| "missing value for run hook".to_string())?,
+                }),
+                "mv" => Ok(HookStep::Move {
+                    mv: value.ok_or_else(|| "missing value for mv hook".to_string())?,
+                }),
+                "webhook" => Ok(HookStep::Webhook {
+                    webhook: value.ok_or_else(|| "missing value for webhook hook".to_string())?,
+                }),
+                "rm" => Ok(HookStep::Remove("rm".to_string())),
+                other => Err(format!("unknown hook command: {other}")),
+            },
+        }
+    }
+}
+
+impl From<HookStep> for HookStepDef {
+    fn from(value: HookStep) -> Self {
+        match value {
+            HookStep::Run { run } => HookStepDef::Run { run },
+            HookStep::Move { mv } => HookStepDef::Move { mv },
+            HookStep::Webhook { webhook } => HookStepDef::Webhook { webhook },
+            HookStep::Remove(cmd) => HookStepDef::Remove(cmd),
+        }
+    }
 }
 
 impl HookStep {
@@ -33,16 +91,16 @@ impl HookStep {
         match self {
             HookStep::Run { run } => {
                 // 执行自定义命令
-                let paths_str = video_paths
-                    .iter()
-                    .map(|p| p.to_string_lossy())
-                    .reduce(|acc, e| Cow::from(acc.to_string() + "\n" + &*e))
-                    .ok_or(AppError::Unknown)?;
-                self.execute_command(run, paths_str.as_bytes()).await?;
+                let paths = Self::join_video_paths(video_paths);
+                self.execute_command(run, paths.as_bytes()).await?;
             }
             HookStep::Move { mv } => {
                 // 移动文件到指定目录
                 self.move_file(video_paths, mv).await?;
+            }
+            HookStep::Webhook { webhook } => {
+                let paths = Self::join_video_paths(video_paths);
+                self.execute_webhook(webhook, paths.as_bytes()).await?;
             }
             HookStep::Remove(cmd) if cmd == "rm" => {
                 // 删除文件
@@ -68,12 +126,23 @@ impl HookStep {
             HookStep::Run { run } => {
                 self.execute_command(run, src).await?;
             }
+            HookStep::Webhook { webhook } => {
+                self.execute_webhook(webhook, src).await?;
+            }
             cmd => {
                 // 未知命令，返回错误
                 bail!(AppError::Custom(format!("不支持的命令: {:?}", cmd)));
             }
         }
         Ok(())
+    }
+
+    fn join_video_paths(video_paths: &[&Path]) -> String {
+        video_paths
+            .iter()
+            .map(|p| p.to_string_lossy().into_owned())
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 
     /// 执行自定义命令，将视频路径作为标准输入传入
@@ -117,19 +186,19 @@ impl HookStep {
 
         loop {
             tokio::select! {
-                        line = stdout_lines.next_line() => {
-                            match line.change_context(AppError::Unknown)? {
-                                Some(l) => tracing::info!(target="user_cmd_stdout", "{}", l),
-                                None => break, // stdout EOF
-                            }
-                        }
-                        line = stderr_lines.next_line() => {
-                            match line.change_context(AppError::Unknown)? {
-                                Some(l) => tracing::warn!(target="user_cmd_stderr", "{}", l),
-                                None => break, // stderr EOF
-                            }
-                        }
+                line = stdout_lines.next_line() => {
+                    match line.change_context(AppError::Unknown)? {
+                        Some(l) => tracing::info!(target="user_cmd_stdout", "{}", l),
+                        None => break, // stdout EOF
                     }
+                }
+                line = stderr_lines.next_line() => {
+                    match line.change_context(AppError::Unknown)? {
+                        Some(l) => tracing::warn!(target="user_cmd_stderr", "{}", l),
+                        None => break, // stderr EOF
+                    }
+                }
+            }
         }
 
         // 等待进程完成并检查退出状态
@@ -137,9 +206,45 @@ impl HookStep {
 
         if !status.success() {
             bail!(AppError::Custom(format!(
-                        "Command failed with status: {}",
-                        status
-                    )));
+                "Command failed with status: {}",
+                status
+            )));
+        }
+
+        Ok(())
+    }
+
+    async fn execute_webhook(&self, url: &str, src: &[u8]) -> AppResult<()> {
+        let content_type = if src.is_empty() {
+            "application/octet-stream"
+        } else if serde_json::from_slice::<serde_json::Value>(src).is_ok() {
+            "application/json"
+        } else {
+            "text/plain; charset=utf-8"
+        };
+
+        let response = reqwest::Client::new()
+            .post(url)
+            .header(reqwest::header::CONTENT_TYPE, content_type)
+            .body(src.to_vec())
+            .send()
+            .await
+            .change_context(AppError::Unknown)?;
+
+        let status = response.status();
+        let body = response.text().await.change_context(AppError::Unknown)?;
+
+        if !status.is_success() {
+            bail!(AppError::Custom(format!(
+                "Webhook failed with status {status}: {}",
+                body.trim()
+            )));
+        }
+
+        if !body.trim().is_empty() {
+            info!(url, response = body.trim(), "webhook executed");
+        } else {
+            info!(url, "webhook executed");
         }
 
         Ok(())
@@ -271,6 +376,7 @@ pub async fn process(input: &[u8], processors: &Option<Vec<HookStep>>) {
             match processor {
                 HookStep::Run { run } => info!(cmd=%run),
                 HookStep::Move { mv } => info!(cmd=%mv),
+                HookStep::Webhook { webhook } => info!(cmd=%webhook),
                 HookStep::Remove(s) => info!(cmd=%s),
             }
             if let Err(e) = processor.execute_with(input).await {
@@ -278,5 +384,79 @@ pub async fn process(input: &[u8], processors: &Option<Vec<HookStep>>) {
             }
             // info!(processor=?processor, "processing completed");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::HookStep;
+
+    #[test]
+    fn deserialize_legacy_hook_step_shapes() {
+        let run: HookStep = serde_json::from_str(r#"{"run":"echo hi"}"#).unwrap();
+        let mv: HookStep = serde_json::from_str(r#"{"mv":"backup/"}"#).unwrap();
+        let webhook: HookStep =
+            serde_json::from_str(r#"{"webhook":"https://example.com/hook"}"#).unwrap();
+        let rm: HookStep = serde_json::from_str(r#""rm""#).unwrap();
+
+        assert_eq!(
+            run,
+            HookStep::Run {
+                run: "echo hi".into()
+            }
+        );
+        assert_eq!(
+            mv,
+            HookStep::Move {
+                mv: "backup/".into()
+            }
+        );
+        assert_eq!(
+            webhook,
+            HookStep::Webhook {
+                webhook: "https://example.com/hook".into()
+            }
+        );
+        assert_eq!(rm, HookStep::Remove("rm".into()));
+    }
+
+    #[test]
+    fn deserialize_cmd_value_shape() {
+        let run: HookStep = serde_json::from_str(r#"{"cmd":"run","value":"echo hi"}"#).unwrap();
+        let webhook: HookStep =
+            serde_json::from_str(r#"{"cmd":"webhook","value":"https://example.com/hook"}"#)
+                .unwrap();
+        let rm: HookStep = serde_json::from_str(r#"{"cmd":"rm"}"#).unwrap();
+
+        assert_eq!(
+            run,
+            HookStep::Run {
+                run: "echo hi".into()
+            }
+        );
+        assert_eq!(
+            webhook,
+            HookStep::Webhook {
+                webhook: "https://example.com/hook".into()
+            }
+        );
+        assert_eq!(rm, HookStep::Remove("rm".into()));
+    }
+
+    #[test]
+    fn serialize_to_legacy_shape_for_storage() {
+        let run = serde_json::to_string(&HookStep::Run {
+            run: "echo hi".into(),
+        })
+        .unwrap();
+        let webhook = serde_json::to_string(&HookStep::Webhook {
+            webhook: "https://example.com/hook".into(),
+        })
+        .unwrap();
+        let rm = serde_json::to_string(&HookStep::Remove("rm".into())).unwrap();
+
+        assert_eq!(run, r#"{"run":"echo hi"}"#);
+        assert_eq!(webhook, r#"{"webhook":"https://example.com/hook"}"#);
+        assert_eq!(rm, r#""rm""#);
     }
 }

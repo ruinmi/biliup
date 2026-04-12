@@ -124,7 +124,7 @@ impl FfmpegDownloader {
         {
             args.push("-sn".to_string());
         }
-    
+
         // 添加通用输出参数
         self.append_common_output_args(&mut args, &download_config.suffix);
 
