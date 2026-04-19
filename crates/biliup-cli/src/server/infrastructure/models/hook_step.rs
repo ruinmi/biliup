@@ -357,12 +357,25 @@ impl HookStep {
 /// # 参数
 /// * `video_path` - 视频文件路径列表
 /// * `processors` - 处理器步骤列表
-pub async fn process_video(video_path: &[&Path], processors: &[HookStep]) -> AppResult<()> {
+pub async fn process_video(
+    video_path: &[&Path],
+    processors: &[HookStep],
+    webhook_input: Option<&[u8]>,
+) -> AppResult<()> {
     // info!("Starting video processing...");
 
     // 依次执行每个处理器步骤
     for processor in processors {
-        processor.execute(video_path).await?;
+        match processor {
+            HookStep::Webhook { .. } => {
+                if let Some(input) = webhook_input {
+                    processor.execute_with(input).await?;
+                } else {
+                    processor.execute(video_path).await?;
+                }
+            }
+            _ => processor.execute(video_path).await?,
+        }
     }
 
     // info!("Video processing completed");

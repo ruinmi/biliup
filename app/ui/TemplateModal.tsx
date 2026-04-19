@@ -51,7 +51,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
       <code>postprocessor</code> 中的 webhook
       会在上传完成后执行；未配置上传模板时，则在录制完成后执行
       <br />
-      请求体为换行分隔的视频文件路径列表；返回 HTTP 2xx 视为成功，非 2xx 视为失败
+      webhook 会以 POST 发送主播信息 JSON；返回 HTTP 2xx 视为成功，非 2xx 视为失败
       <br />
       <Text type="danger">注意风险。</Text>视频文件路径作为标准输入传入
       <br />

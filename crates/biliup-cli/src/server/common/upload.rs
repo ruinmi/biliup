@@ -282,7 +282,9 @@ pub(crate) async fn build_studio(
 pub async fn execute_postprocessor(video_paths: Vec<PathBuf>, ctx: &Context) -> AppResult<()> {
     if let Some(processor) = &ctx.live_streamer().postprocessor {
         let paths: Vec<&Path> = video_paths.iter().map(|p| p.as_path()).collect();
-        process_video(&paths, processor).await?;
+        let webhook_input = serde_json::to_vec(&ctx.stream_info_ext().streamer_info)
+            .change_context(AppError::Unknown)?;
+        process_video(&paths, processor, Some(&webhook_input)).await?;
     }
     Ok(())
 }
