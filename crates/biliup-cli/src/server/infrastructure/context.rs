@@ -1,14 +1,14 @@
 use crate::server::common::download::DownloadTask;
 use crate::server::common::util::Recorder;
-use crate::server::config::{Config, default_segment_time};
+use crate::server::config::Config;
 use crate::server::core::downloader::DownloadConfig;
-use crate::server::core::plugin::{RecordBlockReason, StreamInfoExt};
+use crate::server::core::live::streamer_info;
 use crate::server::infrastructure::connection_pool::ConnectionPool;
 use crate::server::infrastructure::models::StreamerInfo;
 use crate::server::infrastructure::models::live_streamer::LiveStreamer;
 use crate::server::infrastructure::models::upload_streamer::UploadStreamer;
-use axum::http::Extensions;
 use biliup::client::StatelessClient;
+use biliup::downloader::live::LiveStream;
 use core::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
@@ -21,9 +21,8 @@ pub struct Context {
     id: i64,
     /// 工作器实例
     worker: Arc<Worker>,
-    stream_info: StreamInfoExt,
-    /// 扩展数据容器
-    extension: Extensions,
+    stream: LiveStream,
+    streamer_info: StreamerInfo,
     pool: ConnectionPool,
 }
 
@@ -32,18 +31,14 @@ impl Context {
     ///
     /// # 参数
     /// * `worker` - 工作器实例的Arc引用
-    pub fn new(
-        id: i64,
-        worker: Arc<Worker>,
-        pool: ConnectionPool,
-        stream_info: StreamInfoExt,
-        extension: Extensions,
-    ) -> Self {
+    pub fn new(id: i64, worker: Arc<Worker>, pool: ConnectionPool, stream: LiveStream) -> Self {
+        let mut streamer_info = streamer_info(&stream);
+        streamer_info.id = id;
         Self {
             id,
             worker,
-            stream_info,
-            extension,
+            stream,
+            streamer_info,
             pool,
         }
     }
@@ -54,6 +49,10 @@ impl Context {
 
     pub fn id(&self) -> i64 {
         self.id
+    }
+
+    pub(crate) fn worker(&self) -> &Arc<Worker> {
+        &self.worker
     }
 
     pub fn live_streamer(&self) -> &LiveStreamer {
@@ -98,26 +97,34 @@ impl Context {
         )
     }
 
-    pub fn stream_info_ext(&self) -> &StreamInfoExt {
-        &self.stream_info
+    pub fn live_stream(&self) -> &LiveStream {
+        &self.stream
     }
 
-    pub fn download_config(&self, ext: &StreamInfoExt) -> DownloadConfig {
+    pub fn streamer_info(&self) -> &StreamerInfo {
+        &self.streamer_info
+    }
+
+    pub fn download_config(&self, stream: &LiveStream) -> DownloadConfig {
         let config = self.config();
         // 确定文件格式后缀
         let suffix = self
             .live_streamer()
             .format
             .clone()
-            .unwrap_or_else(|| ext.suffix.to_string());
+            .unwrap_or_else(|| stream.suffix.to_string());
+        let mut stream_info = streamer_info(stream);
+        if stream.url == self.stream.url {
+            stream_info.id = self.streamer_info.id;
+        }
         DownloadConfig {
             // 流URL
-            url: ext.raw_stream_url.to_string(),
-            segment_time: config.segment_time.or_else(default_segment_time),
+            url: stream.raw_stream_url.to_string(),
+            segment_time: config.segment_time,
             time_range: self.live_streamer().time_range.clone(),
-            file_size: Some(config.file_size), // 2GB
-            headers: ext.stream_headers.clone(),
-            recorder: self.recorder(ext.streamer_info.clone()),
+            file_size: config.file_size,
+            headers: stream.stream_headers.clone(),
+            recorder: self.recorder(stream_info),
             // output_dir: PathBuf::from("./downloads")
             output_dir: PathBuf::from("."),
             suffix,
@@ -164,11 +171,6 @@ impl Worker {
             config,
             client,
         }
-    }
-
-    /// 判断是否应该录制
-    fn should_record(&self, room_title: &str) -> bool {
-        true
     }
 
     pub fn id(&self) -> i64 {
@@ -289,54 +291,5 @@ impl fmt::Debug for WorkerStatus {
             WorkerStatus::Pause => "Pause",
         };
         f.write_str(name)
-    }
-}
-
-/// 应用程序上下文，包含工作器和扩展信息
-#[derive(Debug, Clone)]
-pub struct PluginContext {
-    /// 工作器实例
-    worker: Arc<Worker>,
-    pool: ConnectionPool,
-    extension: Extensions,
-}
-
-impl PluginContext {
-    pub fn new(worker: Arc<Worker>, pool: ConnectionPool) -> Self {
-        Self {
-            worker,
-            pool,
-            extension: Default::default(),
-        }
-    }
-
-    pub fn to_context(&self, id: i64, stream_info: StreamInfoExt) -> Context {
-        Context::new(
-            id,
-            self.worker.clone(),
-            self.pool.clone(),
-            stream_info,
-            self.extension.clone(),
-        )
-    }
-
-    pub fn config(&self) -> Config {
-        self.worker.get_config()
-    }
-
-    pub fn live_streamer(&self) -> &LiveStreamer {
-        &self.worker.get_streamer()
-    }
-
-    pub fn upload_config(&self) -> &Option<UploadStreamer> {
-        self.worker.get_upload_config()
-    }
-
-    pub fn pool(&self) -> &ConnectionPool {
-        &self.pool
-    }
-
-    pub fn client(&self) -> reqwest::Client {
-        self.worker.client.client.clone()
     }
 }

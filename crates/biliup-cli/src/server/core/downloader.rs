@@ -4,17 +4,21 @@ pub mod ffmpeg_downloader;
 /// Stream-gears下载器实现
 pub mod stream_gears;
 pub mod streamlink;
-mod ytdlp;
+pub mod ytdlp;
 
 use crate::server::common::util::Recorder;
 use crate::server::core::downloader::ffmpeg_downloader::FfmpegDownloader;
 use crate::server::core::downloader::stream_gears::StreamGears;
 use crate::server::core::downloader::streamlink::Streamlink;
-use crate::server::errors::AppResult;
+use crate::server::core::downloader::ytdlp::YouTubeDownloader;
+use crate::server::errors::{AppError, AppResult};
 use async_trait::async_trait;
+use danmaku_client::{DanmakuRecorder, RecorderConfig, RecorderHandle};
+use error_stack::Report;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::Mutex;
 
 /// 下载器配置
 /// 包含下载过程中需要的各种参数和设置
@@ -82,6 +86,7 @@ pub enum DownloaderRuntime {
     Ffmpeg(FfmpegDownloader),
     StreamGears(StreamGears),
     StreamLink(Streamlink),
+    YtDlp(YouTubeDownloader),
 }
 
 impl DownloaderRuntime {
@@ -105,9 +110,8 @@ impl DownloaderRuntime {
         match self {
             Self::Ffmpeg(d) => d.download(callback, download_config).await,
             Self::StreamGears(d) => d.download(callback, download_config).await,
-            DownloaderRuntime::StreamLink(_) => {
-                todo!()
-            }
+            DownloaderRuntime::StreamLink(d) => d.download(callback, download_config).await,
+            Self::YtDlp(d) => d.download(callback, download_config).await,
         }
     }
 
@@ -116,6 +120,7 @@ impl DownloaderRuntime {
             Self::Ffmpeg(d) => d.stop().await,
             Self::StreamGears(d) => d.stop().await,
             DownloaderRuntime::StreamLink(d) => d.stop().await,
+            Self::YtDlp(d) => d.stop().await,
         }
     }
 }
@@ -124,6 +129,7 @@ impl DownloaderRuntime {
 pub struct SegmentInfo {
     /// 分段文件路径
     pub prev_file_path: PathBuf,
+    pub danmaku_file_path: Option<PathBuf>,
     pub next_file_path: Option<PathBuf>,
     /// 分段序号
     pub segment_index: usize,
@@ -136,11 +142,13 @@ pub struct SegmentInfo {
 impl SegmentInfo {
     pub fn new(
         prev_file_path: PathBuf,
+        danmaku_file_path: Option<PathBuf>,
         next_file_path: Option<PathBuf>,
         segment_index: usize,
     ) -> Self {
         Self {
             prev_file_path,
+            danmaku_file_path,
             next_file_path,
             segment_index,
         }
@@ -183,8 +191,66 @@ pub trait DanmakuClient {
     ///
     /// # 参数
     /// * `file_name` - 文件名
-    fn rolling(&self, file_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    ///
+    /// 返回 true 表示本次滚动保存产生了可交给后处理的弹幕文件。
+    fn rolling(&self, _file_name: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(false)
+    }
+}
+
+pub struct RustDanmakuClient {
+    config: RecorderConfig,
+    handle: Mutex<Option<RecorderHandle>>,
+}
+
+impl RustDanmakuClient {
+    pub fn new(config: RecorderConfig) -> Self {
+        Self {
+            config,
+            handle: Mutex::new(None),
+        }
+    }
+}
+
+#[async_trait]
+impl DanmakuClient for RustDanmakuClient {
+    async fn download(&self) -> AppResult<()> {
+        let mut handle = self.handle.lock().unwrap();
+        if handle.is_some() {
+            return Ok(());
+        }
+
+        let recorder = DanmakuRecorder::new(self.config.clone())
+            .map_err(|e| Report::new(AppError::Custom(e.to_string())))?;
+        *handle = Some(recorder.start());
         Ok(())
+    }
+
+    async fn stop(&self) -> AppResult<()> {
+        let handle = self.handle.lock().unwrap().take();
+        if let Some(handle) = handle {
+            handle
+                .stop()
+                .await
+                .map_err(|e| Report::new(AppError::Custom(e.to_string())))?;
+        }
+        Ok(())
+    }
+
+    fn rolling(&self, file_name: &str) -> Result<bool, Box<dyn std::error::Error>> {
+        let handle = self
+            .handle
+            .lock()
+            .map_err(|_| "danmaku handle lock poisoned")?
+            .clone();
+        if let Some(handle) = handle {
+            return tokio::task::block_in_place(|| {
+                tokio::runtime::Handle::current()
+                    .block_on(handle.rolling(Some(PathBuf::from(file_name))))
+            })
+            .map_err(Into::into);
+        }
+        Ok(false)
     }
 }
 

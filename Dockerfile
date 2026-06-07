@@ -29,7 +29,7 @@ COPY . /biliup
 RUN set -eux; \
 	\
 	apt-get update; \
-	apt-get install -y --no-install-recommends python3-pip g++; \
+	apt-get install -y --no-install-recommends python3-pip g++ patchelf; \
 	pip3 install maturin --break-system-packages; \
 	if [ ! -f /biliup/biliup.spec ]; then \
 	rm -rf /biliup; \
@@ -79,30 +79,38 @@ RUN set -eux; \
 	apt-mark auto '.*' > /dev/null; \
 	apt-mark manual curl wget; \
 	\
-    arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
-    if [ "$arch" = "amd64" ]; then \
-        ffmpeg_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linux64-gpl.tar.xz"; \
-    elif [ "$arch" = "arm64" ]; then \
-        ffmpeg_url="https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-master-latest-linuxarm64-gpl.tar.xz"; \
-    else \
-        useApt=true; \
-    fi; \
-    \
-    if [ "$useApt" = true ] ; then \
-        apt-get install -y --no-install-recommends ffmpeg; \
-    else \
-        echo "Downloading FFmpeg from: $ffmpeg_url"; \
-        wget -O ffmpeg.tar.xz "$ffmpeg_url" --progress=dot:giga; \
-        tar -xJf ffmpeg.tar.xz -C /usr/local --strip-components=1; \
-        rm -rf \
-            /usr/local/doc \
-            /usr/local/man \
-            /usr/local/bin/ffprobe \
-            /usr/local/bin/ffplay; \
-        rm -rf ffmpeg*; \
-        chmod a+x /usr/local/bin/*; \
-    fi; \
-    \
+	arch="$(dpkg --print-architecture)"; arch="${arch##*-}"; \
+	url='https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-'; \
+	case "$arch" in \
+		'amd64') \
+			url="${url}linux64-gpl-8.1.tar.xz"; \
+		;; \
+		'arm64') \
+			url="${url}linuxarm64-gpl-8.1.tar.xz"; \
+		;; \
+		*) \
+			useApt=true; \
+		;; \
+	esac; \
+	\
+	if [ "$useApt" = true ] ; then \
+		apt-get install -y --no-install-recommends \
+			ffmpeg \
+		; \
+	else \
+		wget -O ffmpeg.tar.xz "$url" --progress=dot:giga; \
+		tar -xJf ffmpeg.tar.xz -C /usr/local --strip-components=1; \
+		rm -rf \
+			/usr/local/doc \
+			/usr/local/man; \
+		rm -rf \
+			/usr/local/bin/ffprobe \
+			/usr/local/bin/ffplay; \
+		rm -rf \
+			ffmpeg*; \
+		chmod a+x /usr/local/* ; \
+	fi; \
+	\
 	# 安装 quickjs 需要 g++
 	pip3 install --no-cache-dir quickjs; \
 	\

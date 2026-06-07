@@ -231,6 +231,7 @@ impl FfmpegDownloader {
 
         callback(SegmentEvent::Segment(SegmentInfo {
             prev_file_path: output_file,
+            danmaku_file_path: None,
             segment_index: 0,
             next_file_path: None,
         }));
@@ -295,6 +296,7 @@ impl FfmpegDownloader {
 
             callback(SegmentEvent::Segment(SegmentInfo {
                 prev_file_path: no_ext,
+                danmaku_file_path: None,
                 next_file_path: None,
                 segment_index,
                 // start_time: std::time::SystemTime::now(),
@@ -314,6 +316,7 @@ impl FfmpegDownloader {
                 .change_context(AppError::Unknown)?;
             callback(SegmentEvent::Segment(SegmentInfo {
                 prev_file_path: no_ext,
+                danmaku_file_path: None,
                 next_file_path: None,
                 segment_index,
                 // start_time: std::time::SystemTime::now(),

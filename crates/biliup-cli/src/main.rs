@@ -3,7 +3,9 @@ use time::macros::format_description;
 use biliup::uploader::util::SubmitOption;
 use biliup_cli::cli::{Cli, Commands, expand_path};
 use biliup_cli::downloader::{download, generate_json};
-use biliup_cli::uploader::{append, list, login, renew, show, upload_by_command, upload_by_config};
+use biliup_cli::uploader::{
+    append, comments, list, login, renew, reply, show, upload_by_command, upload_by_config,
+};
 
 use clap::Parser;
 
@@ -99,6 +101,25 @@ async fn main() -> AppResult<()> {
             .await?
         }
         Commands::Show { vid } => show(user_cookie, vid, cli.proxy.as_deref()).await?,
+        Commands::Comments { vid, sort, pn, ps } => {
+            comments(user_cookie, vid, sort, pn, ps, cli.proxy.as_deref()).await?
+        }
+        Commands::Reply {
+            vid,
+            rpid,
+            message,
+            execute,
+        } => {
+            reply(
+                user_cookie,
+                vid,
+                rpid,
+                message,
+                execute,
+                cli.proxy.as_deref(),
+            )
+            .await?
+        }
         Commands::DumpFlv { file_name } => {
             let file_name = expand_path(file_name);
             generate_json(file_name)?
@@ -109,9 +130,12 @@ async fn main() -> AppResult<()> {
             split_size,
             split_time,
         } => download(&url, output, split_size, split_time).await?,
-        Commands::Server { bind, port, auth } => {
-            biliup_cli::run((&bind, port), auth, console_reload_handle).await?
-        }
+        Commands::Server {
+            bind,
+            port,
+            auth,
+            config,
+        } => biliup_cli::run((&bind, port), auth, console_reload_handle, config).await?,
         Commands::List {
             is_pubing,
             pubed,

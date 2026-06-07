@@ -139,16 +139,22 @@ impl Credential {
     }
 
     pub async fn validate_tokens(&self, login_info: &LoginInfo) -> Result<bool> {
+        let keypair = match login_info.platform.as_deref() {
+            Some("BiliTV") => AppKeyStore::BiliTV,
+            Some("Android") | None => AppKeyStore::Android,
+            Some(_) => return Err("未知平台".into()),
+        };
+
         let payload = {
             let mut payload = json!({
                 "access_key": login_info.token_info.access_token,
                 "actionKey": "appkey",
-                "appkey": AppKeyStore::Android.app_key(),
+                "appkey": keypair.app_key(),
                 "ts": SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs(),
             });
 
             let urlencoded = serde_urlencoded::to_string(&payload)?;
-            let sign = Self::sign(&urlencoded, AppKeyStore::Android.appsec());
+            let sign = Self::sign(&urlencoded, keypair.appsec());
             payload["sign"] = Value::from(sign);
             payload
         };
@@ -568,8 +574,9 @@ impl Credential {
             .form(&[("oauthKey", oauth_key)])
             .send()
             .await?.error_for_status()?;
-        self.login_by_web_cookies(&self.get_cookie("SESSDATA"), &self.get_cookie("bili_jct"))
-            .await
+        let sess_data = self.get_cookie("SESSDATA")?;
+        let bili_jct = self.get_cookie("bili_jct")?;
+        self.login_by_web_cookies(&sess_data, &bili_jct).await
     }
 
     pub async fn login_by_web_cookies(&self, sess_data: &str, bili_jct: &str) -> Result<LoginInfo> {
@@ -639,14 +646,14 @@ impl Credential {
         }
     }
 
-    fn get_cookie(&self, name: &str) -> String {
+    fn get_cookie(&self, name: &str) -> Result<String> {
         let store = self.0.cookie_store.lock().unwrap();
         for item in store.iter_any() {
             if item.name() == name {
-                return item.value().to_string();
+                return Ok(item.value().to_string());
             }
         }
-        panic!("{name} not exist");
+        Err(Kind::Custom(format!("{name} not exist")))
     }
 }
 

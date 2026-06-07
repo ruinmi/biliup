@@ -1,17 +1,18 @@
-use crate::server::common::download::DownloaderMessage;
-use crate::server::common::util::Recorder;
-use crate::server::core::plugin::{DownloadPlugin, StreamStatus};
+use crate::server::common::download::start_download_workflow;
+use crate::server::common::upload::UploaderMessage;
+use crate::server::core::live::{live_request, streamer_info};
 use crate::server::infrastructure::connection_pool::ConnectionPool;
-use crate::server::infrastructure::context::{Context, PluginContext, Stage, Worker, WorkerStatus};
+use crate::server::infrastructure::context::{Context, Stage, Worker, WorkerStatus};
 use crate::server::infrastructure::models::StreamerInfo;
 use async_channel::Sender;
+use biliup::downloader::live::{LivePlugin, LiveStatus};
 use ormlite::Model;
 use ormlite::model::ModelBuilder;
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
-use tokio::sync::oneshot;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot};
 use tokio::task::JoinHandle;
 use tracing::{debug, error, info, trace, warn};
 
@@ -23,8 +24,12 @@ pub struct Monitor {
     sender: tokio::sync::mpsc::Sender<ActorMessage>,
     /// Actor任务句柄
     pool: ConnectionPool,
-    /// 下载消息发送器
-    down_sender: Sender<DownloaderMessage>,
+    /// 上传消息发送器，下载任务产生分段后会通过它交给上传流程。
+    uploader: Sender<UploaderMessage>,
+    /// 下载池许可。监控循环必须先拿到许可，才允许检测开播并启动录制。
+    /// 这样 “开播了/成功开始录制” 只会出现在真正拥有下载并发槽位时。
+    /// 许可由下载任务持有到录制结束，pool1_size 的唯一限流语义在这里表达。
+    download_slots: Arc<Semaphore>,
     monitors: RwLock<HashMap<String, JoinHandle<()>>>,
 }
 
@@ -48,7 +53,11 @@ impl Monitor {
     ///
     /// # 参数
     /// * `name` - 平台名称
-    pub fn new(down_sender: Sender<DownloaderMessage>, pool: ConnectionPool) -> Self {
+    pub fn new(
+        uploader: Sender<UploaderMessage>,
+        download_slots: Arc<Semaphore>,
+        pool: ConnectionPool,
+    ) -> Self {
         // 创建消息通道
         let (sender, receiver) = tokio::sync::mpsc::channel(1);
         let mut actor = RoomsActor::new(receiver);
@@ -58,7 +67,8 @@ impl Monitor {
         Self {
             sender,
             pool,
-            down_sender,
+            uploader,
+            download_slots,
             monitors: Default::default(),
         }
     }
@@ -73,7 +83,7 @@ impl Monitor {
     pub(crate) async fn start_monitor(
         self: &Arc<Self>,
         platform_name: &str,
-        plugin: Arc<dyn DownloadPlugin + Send + Sync>,
+        plugin: Arc<dyn LivePlugin + Send + Sync>,
     ) {
         // info!("start -> [{platform_name}]");
         // 获取下一个要检查的房间
@@ -83,48 +93,51 @@ impl Monitor {
                 .await;
             let url = room.get_streamer().url.clone();
             let interval = room.get_config().event_loop_interval;
-            let mut ctx = PluginContext::new(room.clone(), self.pool.clone());
+            let Some(download_permit) = self.try_acquire_download_slot(&room).await else {
+                self.wake_waker(room.id()).await;
+                tokio::time::sleep(Duration::from_secs(interval)).await;
+                continue;
+            };
+            let request = live_request(&room);
             // 检查直播状态
-            let mut downloader = plugin.create_downloader(&mut ctx);
-            match downloader.check_stream().await {
-                Ok(StreamStatus::Live { mut stream_info }) => {
-                    let sql_no_id = &stream_info.streamer_info;
+            match plugin.check_stream(request).await {
+                Ok(LiveStatus::Live { stream }) => {
+                    let sql_no_id = streamer_info(&stream);
                     let insert = match StreamerInfo::builder()
                         .url(sql_no_id.url.clone())
                         .name(room.live_streamer.remark.clone())
                         .title(sql_no_id.title.clone())
                         .date(sql_no_id.date)
                         .live_cover_path(sql_no_id.live_cover_path.clone())
-                        .insert(ctx.pool())
+                        .insert(&self.pool)
                         .await
                     {
                         Ok(insert) => insert,
                         Err(e) => {
                             error!(e=?e, "插入数据库失败");
+                            self.wake_waker(room.id()).await;
                             continue;
                         }
                     };
                     info!(url = url, "room: is live -> 开播了");
 
-                    // 修改 ctx
-                    // stream_info.streamer_info = insert;
-                    let context = ctx.to_context(insert.id, *stream_info);
-                    // context
-                    // *ctx.mut_stream_info_ext() = *stream_info;
+                    let context = Context::new(insert.id, room.clone(), self.pool.clone(), *stream);
+                    let downloader = plugin.clone();
+                    let uploader = self.uploader.clone();
+                    let rooms_handle = Arc::clone(self);
 
-                    // 发送下载开始消息
-                    if self
-                        .down_sender
-                        .send(DownloaderMessage::Start(downloader, context))
-                        .await
-                        .is_ok()
-                    {
-                        info!("成功开始录制 {}", url)
-                    }
+                    // 只能在已经拿到下载池许可后启动录制。许可移动到任务内并持有到流程结束，
+                    // 因此 pool1_size 只在这里表达，不再通过下载 Actor 池或消息队列重复限流。
+                    tokio::spawn(async move {
+                        let _download_permit = download_permit;
+                        start_download_workflow(downloader, context, uploader, rooms_handle).await;
+                    });
+
+                    info!("成功开始录制 {}", url);
                 }
-                Ok(StreamStatus::Offline) => {
+                Ok(LiveStatus::Offline) => {
                     self.wake_waker(room.id()).await;
-                    debug!(url = ctx.live_streamer().url, "未开播")
+                    debug!(url = room.get_streamer().url, "未开播")
                 }
                 Ok(StreamStatus::Blocked { reason }) => {
                     room.change_status(Stage::Download, WorkerStatus::OutOfSchedule(reason))
@@ -134,13 +147,26 @@ impl Monitor {
                 }
                 Err(e) => {
                     self.wake_waker(room.id()).await;
-                    error!(e=?e, ctx=ctx.live_streamer().url,"检查直播间出错")
+                    error!(e=?e, ctx=room.get_streamer().url,"检查直播间出错")
                 }
             };
             // 等待下一次检查
             tokio::time::sleep(Duration::from_secs(interval)).await;
         }
         // info!("exit -> [{platform_name}]")
+    }
+
+    async fn try_acquire_download_slot(&self, room: &Arc<Worker>) -> Option<OwnedSemaphorePermit> {
+        match self.download_slots.clone().try_acquire_owned() {
+            Ok(permit) => Some(permit),
+            Err(_) => {
+                debug!(
+                    url = room.get_streamer().url,
+                    "download pool is full, skip live check"
+                );
+                None
+            }
+        }
     }
 
     /// 添加工作器到房间列表
@@ -150,7 +176,7 @@ impl Monitor {
     pub async fn add(
         self: &Arc<Self>,
         worker: Arc<Worker>,
-    ) -> Option<Arc<dyn DownloadPlugin + Send + Sync>> {
+    ) -> Option<Arc<dyn LivePlugin + Send + Sync>> {
         let (send, recv) = oneshot::channel();
         let msg = ActorMessage::Add(send, worker.clone());
         let _ = self.sender.send(msg).await;
@@ -164,7 +190,7 @@ impl Monitor {
     ///
     /// # 参数
     /// * `worker` - 要添加的工作器
-    pub async fn add_plugin(&self, plugin: Arc<dyn DownloadPlugin + Send + Sync>) {
+    pub async fn add_plugin(&self, plugin: Arc<dyn LivePlugin + Send + Sync>) {
         let (send, recv) = oneshot::channel();
         let msg = ActorMessage::AddPlugin(send, plugin);
         let _ = self.sender.send(msg).await;
@@ -256,7 +282,7 @@ impl Monitor {
     pub async fn wake_waker(
         self: &Arc<Self>,
         id: i64,
-    ) -> Option<Arc<dyn DownloadPlugin + Send + Sync>> {
+    ) -> Option<Arc<dyn LivePlugin + Send + Sync>> {
         let (send, recv) = oneshot::channel();
 
         let msg = ActorMessage::WakeWaker(send, id);
@@ -284,7 +310,7 @@ impl Monitor {
 
     fn spawn_monitor_task(
         this: Arc<Self>,
-        plugin: Arc<dyn DownloadPlugin + Send + Sync>,
+        plugin: Arc<dyn LivePlugin + Send + Sync>,
         platform_name: String,
     ) -> JoinHandle<()> {
         tokio::spawn(async move {
@@ -292,7 +318,7 @@ impl Monitor {
         })
     }
 
-    fn rooms_handle_pool(self: &Arc<Self>, plugin: Arc<dyn DownloadPlugin + Send + Sync>) {
+    fn rooms_handle_pool(self: &Arc<Self>, plugin: Arc<dyn LivePlugin + Send + Sync>) {
         let platform_name = plugin.name().to_owned();
         match self.monitors.write().unwrap().entry(platform_name.clone()) {
             Entry::Occupied(mut entry) => {
@@ -332,11 +358,11 @@ enum ActorMessage {
     },
     /// 添加工作器
     Add(
-        oneshot::Sender<Option<Arc<dyn DownloadPlugin + Send + Sync>>>,
+        oneshot::Sender<Option<Arc<dyn LivePlugin + Send + Sync>>>,
         Arc<Worker>,
     ),
     /// 添加工作器
-    AddPlugin(oneshot::Sender<()>, Arc<dyn DownloadPlugin + Send + Sync>),
+    AddPlugin(oneshot::Sender<()>, Arc<dyn LivePlugin + Send + Sync>),
     /// 删除工作器
     Del {
         respond_to: oneshot::Sender<Option<Arc<Worker>>>,
@@ -351,14 +377,9 @@ enum ActorMessage {
     GetAll {
         respond_to: oneshot::Sender<Vec<Arc<Worker>>>,
     },
-    /// 查找平台
-    GetPlatform {
-        respond_to: oneshot::Sender<Vec<Arc<Worker>>>,
-        platform_name: String,
-    },
     /// 放回工作队列
     WakeWaker(
-        oneshot::Sender<Option<Arc<dyn DownloadPlugin + Send + Sync>>>,
+        oneshot::Sender<Option<Arc<dyn LivePlugin + Send + Sync>>>,
         i64,
     ),
     /// 移出工作队列
@@ -382,7 +403,7 @@ struct RoomsActor {
     // rooms: Vec<Arc<Worker>>,
     // waiting: Vec<Arc<Worker>>,
     /// 下载插件
-    plugins: Vec<Arc<dyn DownloadPlugin + Send + Sync>>,
+    plugins: Vec<Arc<dyn LivePlugin + Send + Sync>>,
 }
 
 impl RoomsActor {
@@ -436,14 +457,6 @@ impl RoomsActor {
                     // `let _ =` 忽略发送时的任何错误
                     let _ = respond_to.send(self.get_all());
                 }
-
-                ActorMessage::GetPlatform {
-                    respond_to,
-                    platform_name,
-                } => {
-                    // `let _ =` 忽略发送时的任何错误
-                    let _ = respond_to.send(self.get_by_platform(&platform_name));
-                }
                 ActorMessage::MakeWaker(respond_to, id) => {
                     self.pop(id);
                     // `let _ =` 忽略发送时的任何错误
@@ -459,7 +472,7 @@ impl RoomsActor {
         info!("Rooms actor terminated");
     }
 
-    fn add(&mut self, worker: Arc<Worker>) -> Option<Arc<dyn DownloadPlugin + Send + Sync>> {
+    fn add(&mut self, worker: Arc<Worker>) -> Option<Arc<dyn LivePlugin + Send + Sync>> {
         let plugin = self.matches(&worker.live_streamer.url)?;
         let platform_name = plugin.name().to_owned();
         self.all_workers.push(worker.clone());
@@ -477,7 +490,7 @@ impl RoomsActor {
         Some(plugin)
     }
 
-    fn add_plugin(&mut self, plugin: Arc<dyn DownloadPlugin + Send + Sync>) {
+    fn add_plugin(&mut self, plugin: Arc<dyn LivePlugin + Send + Sync>) {
         self.plugins.push(plugin);
         debug!("Added plugin size[{}]", self.plugins.len());
     }
@@ -487,16 +500,6 @@ impl RoomsActor {
             .iter()
             .find(|worker| worker.id() == id)
             .cloned()
-    }
-
-    fn get_by_platform(&mut self, platform_name: &str) -> Vec<Arc<Worker>> {
-        reuse_vec_arc(
-            &mut self
-                .platforms
-                .get(platform_name)
-                .unwrap_or(&VecDeque::new())
-                .iter(),
-        )
     }
 
     fn get_all(&mut self) -> Vec<Arc<Worker>> {
@@ -514,7 +517,7 @@ impl RoomsActor {
     }
 
     /// 放回工作队列
-    fn push_back(&mut self, id: i64) -> Option<Arc<dyn DownloadPlugin + Send + Sync>> {
+    fn push_back(&mut self, id: i64) -> Option<Arc<dyn LivePlugin + Send + Sync>> {
         // 在总数组中找不到，说明该房间已被移除我们也不放回
         let worker = self.get_worker(id)?;
         if let WorkerStatus::Pause = *worker.downloader_status.write().unwrap() {
@@ -580,7 +583,7 @@ impl RoomsActor {
     ///
     /// # 返回
     /// 如果URL匹配返回true，否则返回false
-    pub fn matches(&self, url: &str) -> Option<Arc<dyn DownloadPlugin + Send + Sync>> {
+    pub fn matches(&self, url: &str) -> Option<Arc<dyn LivePlugin + Send + Sync>> {
         for plugin in &self.plugins {
             trace!(
                 platform_name = plugin.name(),

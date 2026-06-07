@@ -56,3 +56,6 @@ cookies.json
 logs/
 biliup-hub/
 scripts/
+
+CLAUDE.md
+.claude/
