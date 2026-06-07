@@ -2,7 +2,7 @@ use crate::server::common::upload::UploaderMessage;
 use crate::server::common::util::FileValidator;
 use crate::server::core::downloader::cover_downloader;
 use crate::server::core::downloader::{
-    DanmakuClient, DownloadStatus, DownloaderRuntime, SegmentEvent, SegmentInfo,
+    DanmakuClient, DownloadStatus, DownloaderRuntime, DownloaderType, SegmentEvent, SegmentInfo,
 };
 use crate::server::core::live::{danmaku_client, downloader_runtime, live_request};
 use crate::server::core::monitor::Monitor;
@@ -301,6 +301,30 @@ impl DownloadTask {
     }
 }
 
+fn selected_downloader(
+    configured: Option<DownloaderType>,
+    stream: &LiveStream,
+    requested_format: Option<&str>,
+) -> Option<DownloaderType> {
+    if configured.is_some() {
+        return configured;
+    }
+
+    let Some(requested_format) = requested_format.map(|value| value.trim().to_ascii_lowercase())
+    else {
+        return None;
+    };
+    if requested_format.is_empty() || requested_format == stream.suffix.to_ascii_lowercase() {
+        return None;
+    }
+
+    info!(
+        stream_suffix = stream.suffix,
+        requested_format, "switching to ffmpeg downloader to honor requested container format"
+    );
+    Some(DownloaderType::Ffmpeg)
+}
+
 /// 启动完整下载流程。
 ///
 /// 只能由 `Monitor` 在取得下载池许可后调用；调用方必须把许可移动到同一个任务中，
@@ -312,7 +336,11 @@ pub async fn start_download_workflow(
     rooms_handle: Arc<Monitor>,
 ) {
     let task = Arc::new(DownloadTask::new(downloader_runtime(
-        ctx.config().downloader,
+        selected_downloader(
+            ctx.config().downloader,
+            ctx.live_stream(),
+            ctx.live_streamer().format.as_deref(),
+        ),
         ctx.live_stream(),
     )));
     ctx.change_status(Stage::Download, WorkerStatus::Working(task.clone()))

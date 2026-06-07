@@ -302,19 +302,34 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                 {({ add, arrayFields }) => (
                   <Form.Section text="下载前处理">
                     <div className="semi-form-field-extra">
-                      下载直播前触发，将按自定义顺序执行自定义操作，仅支持shell指令
+                      下载直播前触发，将按自定义顺序执行操作，支持 shell 指令和 webhook。
+                      webhook 会以 POST 发送主播信息 JSON，适合开播后登记 livestream 信息。
                     </div>
                     <Button icon={<IconPlusCircle />} onClick={add} theme="light">
                       添加行
                     </Button>
                     {arrayFields.map(({ field, key, remove }, i) => (
                       <div key={key} style={{ width: 1000, display: 'flex' }}>
+                        <Form.Select
+                          field={`${field}.cmd`}
+                          label="操作"
+                          rules={[{ required: true, message }]}
+                          noLabel
+                        >
+                          <Form.Select.Option value="run">run（运行）</Form.Select.Option>
+                          <Form.Select.Option value="webhook">webhook</Form.Select.Option>
+                        </Form.Select>
                         <Form.Input
-                          field={`${field}[run]`}
-                          label={`run = `}
+                          field={`${field}.value`}
+                          label="="
                           labelPosition="inset"
                           rules={[{ required: true, message }]}
-                          style={{ width: 400, marginRight: 16 }}
+                          style={{ width: 300, marginRight: 16 }}
+                          placeholder={
+                            api.current?.getValue(field)?.cmd === 'webhook'
+                              ? 'https://example.com/notify'
+                              : undefined
+                          }
                         ></Form.Input>
                         <Button
                           type="danger"

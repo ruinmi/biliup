@@ -6,6 +6,7 @@ use crate::server::infrastructure::context::{Context, Stage, Worker, WorkerStatu
 use crate::server::infrastructure::models::StreamerInfo;
 use async_channel::Sender;
 use biliup::downloader::live::{LivePlugin, LiveStatus};
+use chrono::{DateTime, Local, NaiveTime};
 use ormlite::Model;
 use ormlite::model::ModelBuilder;
 use std::collections::hash_map::Entry;
@@ -98,6 +99,19 @@ impl Monitor {
                 tokio::time::sleep(Duration::from_secs(interval)).await;
                 continue;
             };
+            if !time_range_allows_now(room.get_streamer().time_range.as_deref()) {
+                room.change_status(Stage::Download, WorkerStatus::OutOfSchedule)
+                    .await;
+                debug!(
+                    url = room.get_streamer().url,
+                    time_range = ?room.get_streamer().time_range,
+                    "outside configured recording time range, skip live check"
+                );
+                drop(download_permit);
+                self.wake_waker(room.id()).await;
+                tokio::time::sleep(Duration::from_secs(interval)).await;
+                continue;
+            }
             let request = live_request(&room);
             // 检查直播状态
             match plugin.check_stream(request).await {
@@ -340,6 +354,61 @@ impl Monitor {
             }
         }
     }
+}
+
+fn time_range_allows_now(time_range: Option<&str>) -> bool {
+    let Some(time_range) = time_range else {
+        return true;
+    };
+    let trimmed = time_range.trim();
+    if trimmed.is_empty() {
+        return true;
+    }
+
+    match parse_time_range(trimmed) {
+        Some((start, end)) => {
+            let now = Local::now().time();
+            if start <= end {
+                now >= start && now <= end
+            } else {
+                // Cross-midnight ranges, e.g. 22:00-03:30.
+                now >= start || now <= end
+            }
+        }
+        None => {
+            warn!(
+                time_range = trimmed,
+                "invalid recording time_range, treating as allowed"
+            );
+            true
+        }
+    }
+}
+
+fn parse_time_range(value: &str) -> Option<(NaiveTime, NaiveTime)> {
+    if value.trim_start().starts_with('[') {
+        let values: Vec<String> = serde_json::from_str(value).ok()?;
+        if values.len() != 2 {
+            return None;
+        }
+        return Some((parse_time_point(&values[0])?, parse_time_point(&values[1])?));
+    }
+
+    let (start, end) = value.split_once('-')?;
+    Some((parse_time_point(start)?, parse_time_point(end)?))
+}
+
+fn parse_time_point(value: &str) -> Option<NaiveTime> {
+    let value = value.trim().trim_matches('"');
+    if let Ok(dt) = DateTime::parse_from_rfc3339(value) {
+        return Some(dt.with_timezone(&Local).time());
+    }
+    for fmt in ["%H:%M:%S", "%H:%M"] {
+        if let Ok(time) = NaiveTime::parse_from_str(value, fmt) {
+            return Some(time);
+        }
+    }
+    None
 }
 
 /// Actor消息枚举
@@ -593,5 +662,39 @@ impl RoomsActor {
 }
 
 fn reuse_vec_arc<'a, T: 'a, U: Iterator<Item = &'a Arc<T>>>(v: &mut U) -> Vec<Arc<T>> {
-    v.into_iter().cloned().collect()
+    v.cloned().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_time_range;
+    use chrono::{Local, Timelike};
+
+    fn hms(time: chrono::NaiveTime) -> (u32, u32, u32) {
+        (time.hour(), time.minute(), time.second())
+    }
+
+    #[test]
+    fn parse_plain_time_range() {
+        let (start, end) = parse_time_range("22:00-03:30").unwrap();
+        assert_eq!(hms(start), (22, 0, 0));
+        assert_eq!(hms(end), (3, 30, 0));
+    }
+
+    #[test]
+    fn parse_json_rfc3339_time_range_as_local_time() {
+        let (start, end) =
+            parse_time_range(r#"["2026-06-07T14:00:00.000Z","2026-06-06T19:30:00.000Z"]"#).unwrap();
+        let expected_start = chrono::DateTime::parse_from_rfc3339("2026-06-07T14:00:00.000Z")
+            .unwrap()
+            .with_timezone(&Local)
+            .time();
+        let expected_end = chrono::DateTime::parse_from_rfc3339("2026-06-06T19:30:00.000Z")
+            .unwrap()
+            .with_timezone(&Local)
+            .time();
+
+        assert_eq!(hms(start), hms(expected_start));
+        assert_eq!(hms(end), hms(expected_end));
+    }
 }
