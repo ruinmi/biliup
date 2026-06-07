@@ -82,6 +82,30 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
   const showDialog = () => {
     setVisible(true)
   }
+  const normalizeHookSteps = (steps?: any[]) => {
+    if (!Array.isArray(steps)) return steps
+    return steps.map(step => {
+      if (typeof step === 'string') return step === 'rm' ? { cmd: 'rm' } : step
+      if (step?.cmd) return step
+      if (step?.webhook) return { cmd: 'webhook', value: step.webhook }
+      if (step?.run) return { cmd: 'run', value: step.run }
+      if (step?.mv) return { cmd: 'mv', value: step.mv }
+      return step
+    })
+  }
+
+  const serializeHookSteps = (steps?: any[]) => {
+    if (!Array.isArray(steps)) return steps
+    return steps.map(step => {
+      if (typeof step === 'string') return step
+      if (step?.cmd === 'rm') return 'rm'
+      if (step?.cmd === 'webhook') return { webhook: step.value }
+      if (step?.cmd === 'run') return { run: step.value }
+      if (step?.cmd === 'mv') return { mv: step.value }
+      return step
+    })
+  }
+
   const handleOk = async () => {
     let values = await api.current?.validate()
     values = {
@@ -90,6 +114,9 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
       url: values?.url?.trim(),
       format: values?.format?.trim(),
       time_range: JSON.stringify(values?.time_range?.map((date: Date) => date.toISOString())),
+      preprocessor: serializeHookSteps(values?.preprocessor),
+      downloaded_processor: serializeHookSteps(values?.downloaded_processor),
+      postprocessor: serializeHookSteps(values?.postprocessor),
     }
     await onOk(values)
     setVisible(false)
@@ -125,6 +152,15 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
     console.error(e)
   }
 
+  const initValues = entity
+    ? {
+        ...entity,
+        preprocessor: normalizeHookSteps(entity.preprocessor),
+        downloaded_processor: normalizeHookSteps(entity.downloaded_processor),
+        postprocessor: normalizeHookSteps(entity.postprocessor),
+      }
+    : entity
+
   return (
     <>
       {childrenWithProps}
@@ -141,7 +177,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
           paddingRight: 10,
         }}
       >
-        <Form initValues={entity} getFormApi={formApi => (api.current = formApi)}>
+        <Form initValues={initValues} getFormApi={formApi => (api.current = formApi)}>
           <Form.Input
             field="remark"
             label="录播备注"
