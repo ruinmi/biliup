@@ -275,6 +275,8 @@ pub enum WorkerStatus {
     OutOfSchedule,
     /// 下载暂停中
     Pause,
+    /// 工作失败
+    Error(String),
 }
 
 // 简单 Debug：打印状态名，忽略内部 downloader
@@ -286,6 +288,7 @@ impl fmt::Debug for WorkerStatus {
             WorkerStatus::Idle => "Idle",
             WorkerStatus::OutOfSchedule => "OutOfSchedule",
             WorkerStatus::Pause => "Pause",
+            WorkerStatus::Error(message) => message,
         };
         f.write_str(name)
     }

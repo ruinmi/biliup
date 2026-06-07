@@ -491,12 +491,22 @@ impl UActor {
                     }
                 };
 
-                if let Err(e) = &result {
-                    // error!("Process segment event failed: {}", e);
-                    // 可以添加错误通知机制
+                match &result {
+                    Ok(()) => {
+                        info!(url = ctx.live_streamer().url, "后处理执行完毕");
+                        ctx.change_status(Stage::Upload, WorkerStatus::Idle).await;
+                    }
+                    Err(e) => {
+                        let message = e.to_string();
+                        error!(
+                            url = ctx.live_streamer().url,
+                            error = ?e,
+                            "上传或后处理执行失败"
+                        );
+                        ctx.change_status(Stage::Upload, WorkerStatus::Error(message))
+                            .await;
+                    }
                 }
-                info!(url = ctx.live_streamer().url, "后处理执行完毕：");
-                ctx.change_status(Stage::Upload, WorkerStatus::Idle).await;
             }
         }
     }

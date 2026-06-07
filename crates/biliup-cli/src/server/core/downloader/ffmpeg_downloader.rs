@@ -3,7 +3,7 @@ use crate::server::core::downloader::{
     DownloadConfig, DownloadStatus, DownloaderType, SegmentEvent, SegmentInfo,
 };
 use crate::server::errors::{AppError, AppResult};
-use chrono::{DateTime, NaiveTime, Timelike, Utc};
+use chrono::{DateTime, Local, NaiveTime, Timelike};
 use error_stack::{ResultExt, bail};
 use std::path::PathBuf;
 use std::process::{ExitStatus, Stdio};
@@ -220,6 +220,11 @@ impl FfmpegDownloader {
         let child = cmd.spawn().change_context(AppError::Unknown)?;
 
         let status = spawn_log(child, &self.process_handle).await?;
+        match status.code() {
+            Some(0) | Some(255) => {}
+            err => return Ok(DownloadStatus::Error(format!("FFmpeg error: {err:?}"))),
+        }
+
         // 退出时，重命名文件
         let part_file = format!("{}.part", output_file.display());
         tokio::fs::rename(&part_file, &output_file)
@@ -237,9 +242,8 @@ impl FfmpegDownloader {
         }));
         // 根据退出码判断状态
         match status.code() {
-            Some(0) => Ok(DownloadStatus::SegmentCompleted),
             Some(255) => Ok(DownloadStatus::StreamEnded),
-            err => Ok(DownloadStatus::Error(format!("FFmpeg error: {err:?}"))),
+            _ => Ok(DownloadStatus::SegmentCompleted),
         }
     }
 
@@ -379,7 +383,7 @@ fn get_duration(segment_time: &str, time_range: Option<&str>) -> String {
         return segment_time.to_string();
     };
 
-    let now = Utc::now().time();
+    let now = Local::now().time();
     let now_sec = now.num_seconds_from_midnight() as i64;
     let end_sec = end_time.num_seconds_from_midnight() as i64;
 
@@ -407,25 +411,31 @@ fn get_duration(segment_time: &str, time_range: Option<&str>) -> String {
 }
 
 fn parse_time_range(time_range_str: &str) -> Option<(NaiveTime, NaiveTime)> {
-    let values: Vec<String> = serde_json::from_str(time_range_str).ok()?;
-    if values.len() != 2 {
-        return None;
+    let trimmed = time_range_str.trim();
+    if trimmed.starts_with('[') {
+        let values: Vec<String> = serde_json::from_str(trimmed).ok()?;
+        if values.len() != 2 {
+            return None;
+        }
+
+        let start = parse_time_value(&values[0])?;
+        let end = parse_time_value(&values[1])?;
+        return Some((start, end));
     }
 
-    let start = parse_time_value(&values[0])?;
-    let end = parse_time_value(&values[1])?;
-    Some((start, end))
+    let (start, end) = trimmed.split_once('-')?;
+    Some((parse_time_value(start)?, parse_time_value(end)?))
 }
 
 fn parse_time_value(value: &str) -> Option<NaiveTime> {
     let trimmed = value.trim();
     if let Ok(dt) = DateTime::parse_from_rfc3339(trimmed) {
-        return Some(dt.time());
+        return Some(dt.with_timezone(&Local).time());
     }
 
     let replaced = trimmed.replace('Z', "+00:00");
     if let Ok(dt) = DateTime::parse_from_rfc3339(&replaced) {
-        return Some(dt.time());
+        return Some(dt.with_timezone(&Local).time());
     }
 
     if let Ok(t) = NaiveTime::parse_from_str(trimmed, "%H:%M:%S") {
@@ -486,4 +496,28 @@ async fn spawn_log(
         }
     };
     Ok(status)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_time_range_accepts_dash_format() {
+        let (start, end) = parse_time_range("22:00-03:30").unwrap();
+
+        assert_eq!(start, NaiveTime::from_hms_opt(22, 0, 0).unwrap());
+        assert_eq!(end, NaiveTime::from_hms_opt(3, 30, 0).unwrap());
+    }
+
+    #[test]
+    fn parse_time_range_converts_rfc3339_to_local_time() {
+        let source = "2026-01-01T12:34:56+00:00";
+        let expected = DateTime::parse_from_rfc3339(source)
+            .unwrap()
+            .with_timezone(&Local)
+            .time();
+
+        assert_eq!(parse_time_value(source).unwrap(), expected);
+    }
 }
