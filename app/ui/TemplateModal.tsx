@@ -48,10 +48,11 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
       <br />
       <code>webhook = url</code> 以 POST 调用指定地址
       <br />
-      <code>postprocessor</code> 中的 webhook
-      会在上传完成后执行；未配置上传模板时，则在录制完成后执行
+      <code>downloaded_processor</code> 中的 webhook 会在录制文件上传完成、投稿提交前执行，适合生成投稿封面
       <br />
-      webhook 会以 POST 发送主播信息 JSON；返回 HTTP 2xx 视为成功，非 2xx 视为失败
+      <code>postprocessor</code> 中的 webhook 会在投稿提交后执行；未配置上传模板时，则在录制完成后执行
+      <br />
+      webhook 会以 POST 发送主播信息 JSON（name/title/date/url/live_cover_path）；返回 HTTP 2xx 视为成功，非 2xx 视为失败
       <br />
       <Text type="danger">注意风险。</Text>视频文件路径作为标准输入传入
       <br />

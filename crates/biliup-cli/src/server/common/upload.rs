@@ -6,7 +6,7 @@ use crate::server::errors::{AppError, AppResult};
 use crate::server::infrastructure::context::{Context, Stage, WorkerStatus};
 use crate::server::infrastructure::models::InsertFileItem;
 use crate::server::infrastructure::models::hook_step::{
-    HookStep, process_video, process_video_paths,
+    HookStep, process, process_video, process_video_paths,
 };
 use crate::server::infrastructure::models::upload_streamer::UploadStreamer;
 use async_channel::Receiver;
@@ -65,6 +65,10 @@ where
 
     // 3. 提交到B站
     if !uploaded_videos.videos.is_empty() {
+        let hook_input =
+            serde_json::to_vec(ctx.streamer_info()).change_context(AppError::Unknown)?;
+        process(&hook_input, &ctx.live_streamer().downloaded_processor).await;
+
         let mut recorder = ctx.recorder(ctx.streamer_info().clone()).clone();
         recorder.filename_prefix = upload_config.title.clone();
 
@@ -317,8 +321,8 @@ pub(crate) async fn build_studio(
 pub async fn execute_postprocessor(video_paths: Vec<PathBuf>, ctx: &Context) -> AppResult<()> {
     if let Some(processor) = &ctx.live_streamer().postprocessor {
         let paths: Vec<&Path> = video_paths.iter().map(|p| p.as_path()).collect();
-        let webhook_input = serde_json::to_vec(&ctx.stream_info_ext().streamer_info)
-            .change_context(AppError::Unknown)?;
+        let webhook_input =
+            serde_json::to_vec(ctx.streamer_info()).change_context(AppError::Unknown)?;
         process_video(&paths, processor, Some(&webhook_input)).await?;
     }
     Ok(())
@@ -476,6 +480,12 @@ impl UActor {
                         while let Some(event) = inspect.next().await {
                             paths.extend(segment_paths(&event));
                         }
+                        let hook_input =
+                            serde_json::to_vec(ctx.streamer_info()).unwrap_or_else(|e| {
+                                error!(error = ?e, "Failed to serialize streamer_info for hooks");
+                                Vec::new()
+                            });
+                        process(&hook_input, &ctx.live_streamer().downloaded_processor).await;
                         // 无上传配置时，直接执行后处理
                         execute_postprocessor(paths, &ctx).await
                     }

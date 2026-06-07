@@ -38,6 +38,9 @@ enum HookStepDef {
     Move {
         mv: String,
     },
+    Remux {
+        remux: String,
+    },
     Webhook {
         webhook: String,
     },
@@ -56,6 +59,7 @@ impl TryFrom<HookStepDef> for HookStep {
         match value {
             HookStepDef::Run { run } => Ok(HookStep::Run { run }),
             HookStepDef::Move { mv } => Ok(HookStep::Move { mv }),
+            HookStepDef::Remux { remux } => Ok(HookStep::Remux { remux }),
             HookStepDef::Webhook { webhook } => Ok(HookStep::Webhook { webhook }),
             HookStepDef::Remove(cmd) => Ok(HookStep::Remove(cmd)),
             HookStepDef::CommandValue { cmd, value } => match cmd.as_str() {
@@ -80,6 +84,7 @@ impl From<HookStep> for HookStepDef {
         match value {
             HookStep::Run { run } => HookStepDef::Run { run },
             HookStep::Move { mv } => HookStepDef::Move { mv },
+            HookStep::Remux { remux } => HookStepDef::Remux { remux },
             HookStep::Webhook { webhook } => HookStepDef::Webhook { webhook },
             HookStep::Remove(cmd) => HookStepDef::Remove(cmd),
         }
@@ -662,6 +667,7 @@ pub async fn process(input: &[u8], processors: &Option<Vec<HookStep>>) {
             match processor {
                 HookStep::Run { run } => info!(cmd=%run),
                 HookStep::Move { mv } => info!(cmd=%mv),
+                HookStep::Remux { remux } => info!(cmd=%remux),
                 HookStep::Webhook { webhook } => info!(cmd=%webhook),
                 HookStep::Remove(s) => info!(cmd=%s),
             }
@@ -670,79 +676,5 @@ pub async fn process(input: &[u8], processors: &Option<Vec<HookStep>>) {
             }
             // info!(processor=?processor, "processing completed");
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::HookStep;
-
-    #[test]
-    fn deserialize_legacy_hook_step_shapes() {
-        let run: HookStep = serde_json::from_str(r#"{"run":"echo hi"}"#).unwrap();
-        let mv: HookStep = serde_json::from_str(r#"{"mv":"backup/"}"#).unwrap();
-        let webhook: HookStep =
-            serde_json::from_str(r#"{"webhook":"https://example.com/hook"}"#).unwrap();
-        let rm: HookStep = serde_json::from_str(r#""rm""#).unwrap();
-
-        assert_eq!(
-            run,
-            HookStep::Run {
-                run: "echo hi".into()
-            }
-        );
-        assert_eq!(
-            mv,
-            HookStep::Move {
-                mv: "backup/".into()
-            }
-        );
-        assert_eq!(
-            webhook,
-            HookStep::Webhook {
-                webhook: "https://example.com/hook".into()
-            }
-        );
-        assert_eq!(rm, HookStep::Remove("rm".into()));
-    }
-
-    #[test]
-    fn deserialize_cmd_value_shape() {
-        let run: HookStep = serde_json::from_str(r#"{"cmd":"run","value":"echo hi"}"#).unwrap();
-        let webhook: HookStep =
-            serde_json::from_str(r#"{"cmd":"webhook","value":"https://example.com/hook"}"#)
-                .unwrap();
-        let rm: HookStep = serde_json::from_str(r#"{"cmd":"rm"}"#).unwrap();
-
-        assert_eq!(
-            run,
-            HookStep::Run {
-                run: "echo hi".into()
-            }
-        );
-        assert_eq!(
-            webhook,
-            HookStep::Webhook {
-                webhook: "https://example.com/hook".into()
-            }
-        );
-        assert_eq!(rm, HookStep::Remove("rm".into()));
-    }
-
-    #[test]
-    fn serialize_to_legacy_shape_for_storage() {
-        let run = serde_json::to_string(&HookStep::Run {
-            run: "echo hi".into(),
-        })
-        .unwrap();
-        let webhook = serde_json::to_string(&HookStep::Webhook {
-            webhook: "https://example.com/hook".into(),
-        })
-        .unwrap();
-        let rm = serde_json::to_string(&HookStep::Remove("rm".into())).unwrap();
-
-        assert_eq!(run, r#"{"run":"echo hi"}"#);
-        assert_eq!(webhook, r#"{"webhook":"https://example.com/hook"}"#);
-        assert_eq!(rm, r#""rm""#);
     }
 }

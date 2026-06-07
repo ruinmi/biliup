@@ -13,7 +13,7 @@ use core::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, RwLock};
 use struct_patch::Patch;
-use tracing::{error, info};
+use tracing::error;
 
 /// 应用程序上下文，包含工作器和扩展信息
 #[derive(Debug, Clone)]
@@ -272,7 +272,7 @@ pub enum WorkerStatus {
     #[default]
     Idle,
     /// 未满足录制条件
-    OutOfSchedule(RecordBlockReason),
+    OutOfSchedule,
     /// 下载暂停中
     Pause,
 }
@@ -284,10 +284,7 @@ impl fmt::Debug for WorkerStatus {
             WorkerStatus::Working(_) => "Working",
             WorkerStatus::Pending => "Pending",
             WorkerStatus::Idle => "Idle",
-            WorkerStatus::OutOfSchedule(reason) => match reason {
-                RecordBlockReason::TimeRange => "OutOfSchedule:TimeRange",
-                RecordBlockReason::ExcludedKeywords => "OutOfSchedule:ExcludedKeywords",
-            },
+            WorkerStatus::OutOfSchedule => "OutOfSchedule",
             WorkerStatus::Pause => "Pause",
         };
         f.write_str(name)

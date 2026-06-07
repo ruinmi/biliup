@@ -188,10 +188,6 @@ impl DownloadTask {
                     // 成功下载后重置计数
                     retry_count = 0;
                 }
-                Ok(StreamStatus::Blocked { reason }) => {
-                    retry_count += max_retries;
-                    info!(url = url, reason = ?reason, "Stream blocked by record policy, stopping download");
-                }
                 Ok(LiveStatus::Offline) => {
                     retry_count += 1;
                     // 继续循环，重新执行下载
@@ -343,24 +339,21 @@ pub async fn start_download_workflow(
         }
     });
 
-    process(&[], &ctx.live_streamer().preprocessor).await;
+    let hook_input = match serde_json::to_vec(ctx.streamer_info()) {
+        Ok(value) => value,
+        Err(e) => {
+            error!(error = ?e, "Failed to serialize streamer_info for hooks");
+            Vec::new()
+        }
+    };
+
+    process(&hook_input, &ctx.live_streamer().preprocessor).await;
 
     let _ = task.execute(&ctx, sender, downloader, rooms_handle).await;
 
-    let downloaded_input =
-                    match serde_json::to_vec(&ctx.stream_info_ext().streamer_info) {
-                        Ok(value) => value,
-                        Err(e) => {
-                            error!(error = ?e, "Failed to serialize streamer_info for hooks");
-                            Vec::new()
-                        }
-                    };
-                process(&downloaded_input, &ctx.live_streamer().downloaded_processor).await;
-
     // info!(
-                //     "Download workflow completed {} => {:?}",
-                //     ctx.live_streamer().url,
-                //     ctx.status(Stage::Download)
-                // );
-            
+    //     "Download workflow completed {} => {:?}",
+    //     ctx.live_streamer().url,
+    //     ctx.status(Stage::Download)
+    // );
 }
