@@ -91,14 +91,18 @@ pub enum DownloaderRuntime {
 
 impl DownloaderRuntime {
     /// 从配置创建
-    pub fn from_type(downloader_type: DownloaderType) -> Self {
+    pub fn from_type(downloader_type: DownloaderType, opt_args: Vec<String>) -> Self {
         match downloader_type {
-            DownloaderType::Ffmpeg => Self::Ffmpeg(FfmpegDownloader::new(
-                Vec::new(),
-                DownloaderType::FfmpegExternal,
-            )),
+            DownloaderType::Ffmpeg | DownloaderType::FfmpegExternal => {
+                Self::Ffmpeg(FfmpegDownloader::new(opt_args, DownloaderType::FfmpegExternal))
+            }
+            DownloaderType::FfmpegInternal => {
+                Self::Ffmpeg(FfmpegDownloader::new(opt_args, DownloaderType::FfmpegInternal))
+            }
+            DownloaderType::StreamGears | DownloaderType::SyncDownloader => {
+                Self::StreamGears(StreamGears::new(None))
+            }
             _ => Self::StreamGears(StreamGears::new(None)),
-            // ...
         }
     }
 

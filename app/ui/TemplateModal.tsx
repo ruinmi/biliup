@@ -90,6 +90,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
       if (step?.webhook) return { cmd: 'webhook', value: step.webhook }
       if (step?.run) return { cmd: 'run', value: step.run }
       if (step?.mv) return { cmd: 'mv', value: step.mv }
+      if (step?.remux) return { cmd: 'remux', value: step.remux }
       return step
     })
   }
@@ -102,6 +103,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
       if (step?.cmd === 'webhook') return { webhook: step.value }
       if (step?.cmd === 'run') return { run: step.value }
       if (step?.cmd === 'mv') return { mv: step.value }
+      if (step?.cmd === 'remux') return { remux: step.value }
       return step
     })
   }
@@ -115,6 +117,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
       format: values?.format?.trim(),
       time_range: JSON.stringify(values?.time_range?.map((date: Date) => date.toISOString())),
       preprocessor: serializeHookSteps(values?.preprocessor),
+      segment_processor: serializeHookSteps(values?.segment_processor),
       downloaded_processor: serializeHookSteps(values?.downloaded_processor),
       postprocessor: serializeHookSteps(values?.postprocessor),
     }
@@ -156,6 +159,7 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
     ? {
         ...entity,
         preprocessor: normalizeHookSteps(entity.preprocessor),
+        segment_processor: normalizeHookSteps(entity.segment_processor),
         downloaded_processor: normalizeHookSteps(entity.downloaded_processor),
         postprocessor: normalizeHookSteps(entity.postprocessor),
       }
@@ -384,19 +388,32 @@ const TemplateModal: React.FC<TemplateModalProps> = ({ children, entity, onOk })
                 {({ add, arrayFields }) => (
                   <Form.Section text="分段时后处理">
                     <div className="semi-form-field-extra">
-                      分段时触发，将按自定义顺序执行自定义操作，仅支持shell指令
+                      分段时触发，将按自定义顺序执行自定义操作，支持 shell 指令和 remux。
+                      <code>remux = mp4</code> 会将 ts/m2ts 无重编码转换为 mp4 后再上传。
                     </div>
                     <Button icon={<IconPlusCircle />} onClick={add} theme="light">
                       添加行
                     </Button>
                     {arrayFields.map(({ field, key, remove }, i) => (
                       <div key={key} style={{ width: 1000, display: 'flex' }}>
+                        <Form.Select
+                          field={`${field}.cmd`}
+                          label="操作"
+                          rules={[{ required: true, message }]}
+                          noLabel
+                        >
+                          <Form.Select.Option value="run">run（运行）</Form.Select.Option>
+                          <Form.Select.Option value="remux">remux（转封装）</Form.Select.Option>
+                        </Form.Select>
                         <Form.Input
-                          field={`${field}[run]`}
-                          label={`run = `}
+                          field={`${field}.value`}
+                          label="="
                           labelPosition="inset"
                           rules={[{ required: true, message }]}
                           style={{ width: 400, marginRight: 16 }}
+                          placeholder={
+                            api.current?.getValue(field)?.cmd === 'remux' ? 'mp4' : undefined
+                          }
                         ></Form.Input>
                         <Button
                           type="danger"

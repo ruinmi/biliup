@@ -157,6 +157,7 @@ pub fn streamer_info(stream: &LiveStream) -> StreamerInfo {
 pub fn downloader_runtime(
     config_type: Option<DownloaderType>,
     stream: &LiveStream,
+    opt_args: Vec<String>,
 ) -> DownloaderRuntime {
     let downloader_type = config_type.unwrap_or_else(|| match stream.downloader_hint {
         DownloaderHint::StreamGears => DownloaderType::StreamGears,
@@ -168,7 +169,7 @@ pub fn downloader_runtime(
     match downloader_type {
         DownloaderType::Streamlink => streamlink_runtime(stream),
         DownloaderType::YtDlp | DownloaderType::Ytarchive => ytdlp_runtime(stream, downloader_type),
-        _ => DownloaderRuntime::from_type(downloader_type),
+        _ => DownloaderRuntime::from_type(downloader_type, opt_args),
     }
 }
 

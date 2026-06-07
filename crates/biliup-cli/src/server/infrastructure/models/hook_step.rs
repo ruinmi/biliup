@@ -72,6 +72,9 @@ impl TryFrom<HookStepDef> for HookStep {
                 "webhook" => Ok(HookStep::Webhook {
                     webhook: value.ok_or_else(|| "missing value for webhook hook".to_string())?,
                 }),
+                "remux" => Ok(HookStep::Remux {
+                    remux: value.ok_or_else(|| "missing value for remux hook".to_string())?,
+                }),
                 "rm" => Ok(HookStep::Remove("rm".to_string())),
                 other => Err(format!("unknown hook command: {other}")),
             },

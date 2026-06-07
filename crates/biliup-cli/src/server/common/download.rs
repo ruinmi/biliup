@@ -12,6 +12,7 @@ use crate::server::infrastructure::models::hook_step::process;
 use async_channel::Sender;
 use biliup::downloader::live::{LivePlugin, LiveStatus, LiveStream};
 use error_stack::ResultExt;
+use serde_json::Value;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -301,6 +302,16 @@ impl DownloadTask {
     }
 }
 
+fn streamer_opt_args(value: Option<&Value>) -> Vec<String> {
+    match value {
+        Some(Value::Array(args)) => args
+            .iter()
+            .filter_map(|arg| arg.as_str().map(ToString::to_string))
+            .collect(),
+        _ => Vec::new(),
+    }
+}
+
 fn selected_downloader(
     configured: Option<DownloaderType>,
     stream: &LiveStream,
@@ -342,6 +353,7 @@ pub async fn start_download_workflow(
             ctx.live_streamer().format.as_deref(),
         ),
         ctx.live_stream(),
+        streamer_opt_args(ctx.live_streamer().opt_args.as_ref()),
     )));
     ctx.change_status(Stage::Download, WorkerStatus::Working(task.clone()))
         .await;
