@@ -93,8 +93,8 @@ impl FfmpegDownloader {
     fn build_ffmpeg_args_external_segment(&self, download_config: &DownloadConfig) -> Vec<String> {
         let mut args = Vec::new();
 
-        // 外部分段使用quiet减少日志
-        args.extend(["-loglevel".to_string(), "quiet".to_string()]);
+        // 外部分段保留 warning 日志，便于定位直播流秒退/封装错误
+        args.extend(["-loglevel".to_string(), "warning".to_string()]);
 
         // 添加通用输入参数
         self.append_common_input_args(&mut args, download_config);
@@ -211,6 +211,17 @@ impl FfmpegDownloader {
         let output_file = download_config.generate_output_filename(&download_config.suffix);
 
         let mut cmd = Command::new("ffmpeg");
+        info!(
+            command = %format!(
+                "ffmpeg {} {}.part",
+                args.iter()
+                    .map(|arg| format!("{:?}", arg))
+                    .collect::<Vec<_>>()
+                    .join(" "),
+                output_file.display()
+            ),
+            "starting ffmpeg external segment"
+        );
         cmd.args(&args)
             .arg(format!("{}.part", output_file.display()))
             .stdin(Stdio::null())
