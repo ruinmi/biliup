@@ -100,14 +100,15 @@ impl FfmpegDownloader {
         self.append_common_input_args(&mut args, download_config);
 
         // 外部分段特定的输出参数
-        // -to: 限制录制时长
+        // -t: limit each external segment by relative duration.
+        // Using -to here can stop almost immediately when live input timestamps already exceed the target.
         if let Some(segment_time) = &download_config.segment_time {
             let duration = get_duration(segment_time, download_config.time_range.as_deref());
             info!(
                 "Duration: {} for {}",
                 duration, download_config.recorder.streamer_info.name
             );
-            args.extend(["-to".to_string(), duration]);
+            args.extend(["-t".to_string(), duration]);
         }
 
         // -fs: 限制文件大小（字节）
