@@ -356,7 +356,7 @@ impl Monitor {
     }
 }
 
-fn time_range_allows_now(time_range: Option<&str>) -> bool {
+pub(crate) fn time_range_allows_now(time_range: Option<&str>) -> bool {
     let Some(time_range) = time_range else {
         return true;
     };
@@ -368,12 +368,7 @@ fn time_range_allows_now(time_range: Option<&str>) -> bool {
     match parse_time_range(trimmed) {
         Some((start, end)) => {
             let now = Local::now().time();
-            if start <= end {
-                now >= start && now <= end
-            } else {
-                // Cross-midnight ranges, e.g. 22:00-03:30.
-                now >= start || now <= end
-            }
+            time_range_allows_time(start, end, now)
         }
         None => {
             warn!(
@@ -382,6 +377,14 @@ fn time_range_allows_now(time_range: Option<&str>) -> bool {
             );
             true
         }
+    }
+}
+
+fn time_range_allows_time(start: NaiveTime, end: NaiveTime, now: NaiveTime) -> bool {
+    if start <= end {
+        now >= start && now <= end
+    } else {
+        now >= start || now <= end
     }
 }
 
@@ -667,7 +670,7 @@ fn reuse_vec_arc<'a, T: 'a, U: Iterator<Item = &'a Arc<T>>>(v: &mut U) -> Vec<Ar
 
 #[cfg(test)]
 mod tests {
-    use super::parse_time_range;
+    use super::{parse_time_range, time_range_allows_time};
     use chrono::{Local, Timelike};
 
     fn hms(time: chrono::NaiveTime) -> (u32, u32, u32) {
@@ -696,5 +699,47 @@ mod tests {
 
         assert_eq!(hms(start), hms(expected_start));
         assert_eq!(hms(end), hms(expected_end));
+    }
+
+    #[test]
+    fn cross_midnight_time_range_allows_only_window_times() {
+        let (start, end) = parse_time_range("22:00-03:40").unwrap();
+
+        assert!(time_range_allows_time(
+            start,
+            end,
+            chrono::NaiveTime::from_hms_opt(22, 30, 0).unwrap()
+        ));
+        assert!(time_range_allows_time(
+            start,
+            end,
+            chrono::NaiveTime::from_hms_opt(3, 30, 0).unwrap()
+        ));
+        assert!(!time_range_allows_time(
+            start,
+            end,
+            chrono::NaiveTime::from_hms_opt(6, 8, 0).unwrap()
+        ));
+        assert!(!time_range_allows_time(
+            start,
+            end,
+            chrono::NaiveTime::from_hms_opt(12, 5, 0).unwrap()
+        ));
+    }
+
+    #[test]
+    fn same_day_time_range_stops_after_end() {
+        let (start, end) = parse_time_range("12:00:00-12:05:26").unwrap();
+
+        assert!(time_range_allows_time(
+            start,
+            end,
+            chrono::NaiveTime::from_hms_opt(12, 5, 0).unwrap()
+        ));
+        assert!(!time_range_allows_time(
+            start,
+            end,
+            chrono::NaiveTime::from_hms_opt(12, 6, 0).unwrap()
+        ));
     }
 }

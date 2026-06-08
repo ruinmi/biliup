@@ -5,7 +5,7 @@ use crate::server::core::downloader::{
     DanmakuClient, DownloadStatus, DownloaderRuntime, DownloaderType, SegmentEvent, SegmentInfo,
 };
 use crate::server::core::live::{danmaku_client, downloader_runtime, live_request};
-use crate::server::core::monitor::Monitor;
+use crate::server::core::monitor::{time_range_allows_now, Monitor};
 use crate::server::errors::{AppError, AppResult};
 use crate::server::infrastructure::context::{Context, Stage, WorkerStatus};
 use crate::server::infrastructure::models::hook_step::process;
@@ -174,6 +174,14 @@ impl DownloadTask {
 
             if self.token.is_cancelled() {
                 info!(url = url, "task is cancelled");
+                break components;
+            }
+            if !time_range_allows_now(ctx.live_streamer().time_range.as_deref()) {
+                info!(
+                    url = url,
+                    time_range = ?ctx.live_streamer().time_range,
+                    "outside configured recording time range, stopping download retry"
+                );
                 break components;
             }
             // 检查流状态
