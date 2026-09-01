@@ -17,8 +17,9 @@ use danmaku_client::{DanmakuRecorder, RecorderConfig, RecorderHandle};
 use error_stack::Report;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::time::SystemTime;
 
 /// 下载器配置
 /// 包含下载过程中需要的各种参数和设置
@@ -93,12 +94,13 @@ impl DownloaderRuntime {
     /// 从配置创建
     pub fn from_type(downloader_type: DownloaderType, opt_args: Vec<String>) -> Self {
         match downloader_type {
-            DownloaderType::Ffmpeg | DownloaderType::FfmpegExternal => {
-                Self::Ffmpeg(FfmpegDownloader::new(opt_args, DownloaderType::FfmpegExternal))
-            }
-            DownloaderType::FfmpegInternal => {
-                Self::Ffmpeg(FfmpegDownloader::new(opt_args, DownloaderType::FfmpegInternal))
-            }
+            DownloaderType::Ffmpeg | DownloaderType::FfmpegExternal => Self::Ffmpeg(
+                FfmpegDownloader::new(opt_args, DownloaderType::FfmpegExternal),
+            ),
+            DownloaderType::FfmpegInternal => Self::Ffmpeg(FfmpegDownloader::new(
+                opt_args,
+                DownloaderType::FfmpegInternal,
+            )),
             DownloaderType::StreamGears | DownloaderType::SyncDownloader => {
                 Self::StreamGears(StreamGears::new(None))
             }
@@ -137,10 +139,10 @@ pub struct SegmentInfo {
     pub next_file_path: Option<PathBuf>,
     /// 分段序号
     pub segment_index: usize,
-    // /// 分段开始时间戳
-    // start_time: std::time::SystemTime,
-    // /// 分段结束时间戳
-    // end_time: std::time::SystemTime,
+    /// 分段文件时间轴 00:00:00 对应的墙钟时间。优先读取文件 birth time。
+    pub start_time: Option<SystemTime>,
+    /// 分段文件写入结束时间。优先读取文件 mtime。
+    pub end_time: Option<SystemTime>,
 }
 
 impl SegmentInfo {
@@ -150,13 +152,75 @@ impl SegmentInfo {
         next_file_path: Option<PathBuf>,
         segment_index: usize,
     ) -> Self {
+        let (start_time, end_time) = segment_file_times(&prev_file_path);
         Self {
             prev_file_path,
             danmaku_file_path,
             next_file_path,
             segment_index,
+            start_time,
+            end_time,
         }
     }
+
+    /// 当文件系统不提供 birth/mtime 时，用下载器掌握的时间补齐。
+    pub fn with_time_fallbacks(
+        mut self,
+        start_time: Option<SystemTime>,
+        end_time: Option<SystemTime>,
+    ) -> Self {
+        if self.start_time.is_none() {
+            self.start_time = start_time;
+        }
+        if self.end_time.is_none() {
+            self.end_time = end_time;
+        }
+        self
+    }
+}
+
+fn segment_file_times(path: &Path) -> (Option<SystemTime>, Option<SystemTime>) {
+    let Ok(metadata) = std::fs::metadata(path) else {
+        return (None, None);
+    };
+    let start_time = metadata.created().ok().or_else(|| linux_birth_time(path));
+    (start_time, metadata.modified().ok())
+}
+
+#[cfg(target_os = "linux")]
+fn linux_birth_time(path: &Path) -> Option<SystemTime> {
+    use std::ffi::CString;
+    use std::mem::MaybeUninit;
+    use std::os::unix::ffi::OsStrExt;
+
+    let path = CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut statx = MaybeUninit::<libc::statx>::zeroed();
+    let rc = unsafe {
+        libc::statx(
+            libc::AT_FDCWD,
+            path.as_ptr(),
+            libc::AT_SYMLINK_NOFOLLOW,
+            libc::STATX_BTIME,
+            statx.as_mut_ptr(),
+        )
+    };
+    if rc != 0 {
+        return None;
+    }
+    let statx = unsafe { statx.assume_init() };
+    if statx.stx_mask & libc::STATX_BTIME == 0 || statx.stx_btime.tv_sec < 0 {
+        return None;
+    }
+    let nanos = u32::try_from(statx.stx_btime.tv_nsec).ok()?;
+    std::time::UNIX_EPOCH.checked_add(std::time::Duration::new(
+        statx.stx_btime.tv_sec as u64,
+        nanos,
+    ))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn linux_birth_time(_path: &Path) -> Option<SystemTime> {
+    None
 }
 
 /// 分段事件

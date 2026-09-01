@@ -23,7 +23,7 @@ use futures::stream::Inspect;
 use ormlite::Insert;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 use tokio::pin;
 use tracing::{error, info};
 
@@ -35,10 +35,35 @@ struct UploadContext {
     client: StatelessClient,
 }
 
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct PostprocessorSegment {
+    path: String,
+    index: usize,
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
+}
+
+impl PostprocessorSegment {
+    fn from_event(event: &SegmentInfo, path: &Path, index: usize) -> Self {
+        Self {
+            path: path.to_string_lossy().into_owned(),
+            index,
+            start_ts: event.start_time.and_then(system_time_to_unix),
+            end_ts: event.end_time.and_then(system_time_to_unix),
+        }
+    }
+}
+
+fn system_time_to_unix(value: SystemTime) -> Option<i64> {
+    let duration = value.duration_since(UNIX_EPOCH).ok()?;
+    i64::try_from(duration.as_secs()).ok()
+}
+
 #[derive(Default)]
 struct UploadedVideos {
     videos: Vec<Video>,
     paths: Vec<PathBuf>,
+    segments: Vec<PostprocessorSegment>,
 }
 
 pub async fn process_with_upload<F>(
@@ -85,7 +110,7 @@ where
 
     // 4. 执行后处理
     if !uploaded_videos.paths.is_empty() {
-        execute_postprocessor(uploaded_videos.paths, ctx).await?;
+        execute_postprocessor(uploaded_videos.paths, &uploaded_videos.segments, ctx).await?;
     }
 
     Ok(())
@@ -170,6 +195,12 @@ where
         match upload_single_file(&upload_path, context).await {
             Ok(video) => {
                 uploaded.videos.push(video);
+                let index = uploaded.segments.len() + 1;
+                uploaded.segments.push(PostprocessorSegment::from_event(
+                    &event,
+                    &upload_path,
+                    index,
+                ));
                 // 1.0.7 的 FileInfo(video, danmaku) 语义：上传完成后的 postprocessor
                 // 继续接收本段视频路径和对应弹幕路径。segment_processor 可能已把
                 // 首个视频路径原地替换（例如 Remux .ts→.mp4），因此这里保留转换后的路径集。
@@ -318,12 +349,18 @@ pub(crate) async fn build_studio(
     Ok(studio)
 }
 
-pub async fn execute_postprocessor(video_paths: Vec<PathBuf>, ctx: &Context) -> AppResult<()> {
+pub async fn execute_postprocessor(
+    video_paths: Vec<PathBuf>,
+    segments: &[PostprocessorSegment],
+    ctx: &Context,
+) -> AppResult<()> {
     if let Some(processor) = &ctx.live_streamer().postprocessor {
         let paths: Vec<&Path> = video_paths.iter().map(|p| p.as_path()).collect();
         let webhook_input =
             serde_json::to_vec(ctx.streamer_info()).change_context(AppError::Unknown)?;
-        process_video(&paths, processor, Some(&webhook_input)).await?;
+        let segments_json = serde_json::to_string(segments).change_context(AppError::Unknown)?;
+        let run_env = [("BILIUP_SEGMENTS_JSON", segments_json.as_str())];
+        process_video(&paths, processor, Some(&webhook_input), Some(&run_env)).await?;
     }
     Ok(())
 }
@@ -476,8 +513,15 @@ impl UActor {
                     Some(config) => process_with_upload(inspect, &ctx, config).await,
                     None => {
                         let mut paths = Vec::new();
+                        let mut segments = Vec::new();
                         pin!(inspect);
                         while let Some(event) = inspect.next().await {
+                            let index = segments.len() + 1;
+                            segments.push(PostprocessorSegment::from_event(
+                                &event,
+                                &event.prev_file_path,
+                                index,
+                            ));
                             paths.extend(segment_paths(&event));
                         }
                         let hook_input =
@@ -487,7 +531,7 @@ impl UActor {
                             });
                         process(&hook_input, &ctx.live_streamer().downloaded_processor).await;
                         // 无上传配置时，直接执行后处理
-                        execute_postprocessor(paths, &ctx).await
+                        execute_postprocessor(paths, &segments, &ctx).await
                     }
                 };
 

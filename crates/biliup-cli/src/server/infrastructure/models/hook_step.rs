@@ -113,8 +113,10 @@ impl HookStep {
                 if paths.is_empty() {
                     return Err(AppError::Unknown.into());
                 }
-                let paths_str = paths.join("\n");
-                self.execute_command(run, paths_str.as_bytes()).await?;
+                let mut paths_str = paths.join("\n");
+                paths_str.push('\n');
+                self.execute_command(run, paths_str.as_bytes(), None)
+                    .await?;
             }
             HookStep::Move { mv } => {
                 // 移动文件到指定目录
@@ -259,7 +261,7 @@ impl HookStep {
     pub async fn execute_with(&self, src: &[u8]) -> AppResult<()> {
         match self {
             HookStep::Run { run } => {
-                self.execute_command(run, src).await?;
+                self.execute_command(run, src, None).await?;
             }
             HookStep::Webhook { webhook } => {
                 self.execute_webhook(webhook, src).await?;
@@ -272,6 +274,23 @@ impl HookStep {
         Ok(())
     }
 
+    /// postprocessor 的 Run hook 可额外注入结构化分片元数据环境变量。
+    /// 其它 hook 保持原语义，不受环境变量影响。
+    pub async fn execute_video_with_env(
+        &self,
+        video_paths: &[&Path],
+        env: Option<&[(&str, &str)]>,
+    ) -> AppResult<()> {
+        match self {
+            HookStep::Run { run } => {
+                let paths = Self::join_video_paths_terminated(video_paths);
+                self.execute_command(run, paths.as_bytes(), env).await?;
+                Ok(())
+            }
+            _ => self.execute(video_paths).await,
+        }
+    }
+
     fn join_video_paths(video_paths: &[&Path]) -> String {
         video_paths
             .iter()
@@ -280,12 +299,25 @@ impl HookStep {
             .join("\n")
     }
 
+    fn join_video_paths_terminated(video_paths: &[&Path]) -> String {
+        let mut joined = Self::join_video_paths(video_paths);
+        if !joined.is_empty() {
+            joined.push('\n');
+        }
+        joined
+    }
+
     /// 执行自定义命令，将视频路径作为标准输入传入
     ///
     /// # 参数
     /// * `cmd` - 要执行的命令字符串
     /// * `video_paths` - 视频文件路径列表
-    async fn execute_command(&self, cmd: &str, src: &[u8]) -> AppResult<()> {
+    async fn execute_command(
+        &self,
+        cmd: &str,
+        src: &[u8],
+        env: Option<&[(&str, &str)]>,
+    ) -> AppResult<()> {
         // 1. 跨平台 Shell 处理 (对应 shell=True)
         // Windows 使用 "cmd /C"，Unix/Mac 使用 "sh -c"
         let (shell, flag) = if cfg!(target_os = "windows") {
@@ -296,14 +328,19 @@ impl HookStep {
         // 执行自定义命令
         // 解析命令和参数
         // 启动子进程，配置标准输入管道
-        let mut process = Command::new(shell)
+        let mut command = Command::new(shell);
+        command
             .arg(flag)
             .arg(cmd)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
-            .spawn()
-            .change_context(AppError::Unknown)?;
+            .stderr(std::process::Stdio::piped());
+        if let Some(env) = env {
+            for (key, value) in env {
+                command.env(key, value);
+            }
+        }
+        let mut process = command.spawn().change_context(AppError::Unknown)?;
 
         // 将自定义输入写入标准输入
         if let Some(mut stdin) = process.stdin.take() {
@@ -519,6 +556,7 @@ pub async fn process_video(
     video_path: &[&Path],
     processors: &[HookStep],
     webhook_input: Option<&[u8]>,
+    run_env: Option<&[(&str, &str)]>,
 ) -> AppResult<()> {
     // info!("Starting video processing...");
 
@@ -532,7 +570,11 @@ pub async fn process_video(
                     processor.execute(video_path).await?;
                 }
             }
-            _ => processor.execute(video_path).await?,
+            _ => {
+                processor
+                    .execute_video_with_env(video_path, run_env)
+                    .await?
+            }
         }
     }
 
@@ -558,6 +600,16 @@ pub async fn process_video_paths(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn run_hook_path_input_is_newline_terminated() {
+        let a = Path::new("a.mkv");
+        let b = Path::new("b.mkv");
+        assert_eq!(
+            HookStep::join_video_paths_terminated(&[a, b]),
+            "a.mkv\nb.mkv\n"
+        );
+    }
 
     #[test]
     fn deserialize_yaml_variants() {

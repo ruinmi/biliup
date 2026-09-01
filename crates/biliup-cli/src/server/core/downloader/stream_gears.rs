@@ -75,12 +75,7 @@ impl StreamGears {
             move |s: &str| {
                 let file_path = PathBuf::from(s);
 
-                let event = SegmentInfo {
-                    prev_file_path: file_path,
-                    danmaku_file_path: None,
-                    next_file_path: None,
-                    segment_index: i,
-                };
+                let event = SegmentInfo::new(file_path, None, None, i);
                 callback(SegmentEvent::Segment(event));
 
                 i += 1;

@@ -229,6 +229,7 @@ impl FfmpegDownloader {
             .stderr(Stdio::piped())
             .kill_on_drop(true);
 
+        let fallback_start = std::time::SystemTime::now();
         let child = cmd.spawn().change_context(AppError::Unknown)?;
 
         let status = spawn_log(child, &self.process_handle).await?;
@@ -246,12 +247,9 @@ impl FfmpegDownloader {
         // 分段回调
         // 触发分段回调
 
-        callback(SegmentEvent::Segment(SegmentInfo {
-            prev_file_path: output_file,
-            danmaku_file_path: None,
-            segment_index: 0,
-            next_file_path: None,
-        }));
+        let segment = SegmentInfo::new(output_file, None, None, 0)
+            .with_time_fallbacks(Some(fallback_start), Some(std::time::SystemTime::now()));
+        callback(SegmentEvent::Segment(segment));
         // 根据退出码判断状态
         match status.code() {
             Some(255) => Ok(DownloadStatus::StreamEnded),
@@ -310,14 +308,12 @@ impl FfmpegDownloader {
                 .change_context(AppError::Unknown)?;
             info!("renamed file: from {file_path:?} to {no_ext:?}");
 
-            callback(SegmentEvent::Segment(SegmentInfo {
-                prev_file_path: no_ext,
-                danmaku_file_path: None,
-                next_file_path: None,
+            callback(SegmentEvent::Segment(SegmentInfo::new(
+                no_ext,
+                None,
+                None,
                 segment_index,
-                // start_time: std::time::SystemTime::now(),
-                // end_time: std::time::SystemTime::now(),
-            }));
+            )));
 
             segment_index += 1;
             prev_file_path = Some(file_path);
@@ -330,14 +326,12 @@ impl FfmpegDownloader {
             tokio::fs::rename(&file_path, &no_ext)
                 .await
                 .change_context(AppError::Unknown)?;
-            callback(SegmentEvent::Segment(SegmentInfo {
-                prev_file_path: no_ext,
-                danmaku_file_path: None,
-                next_file_path: None,
+            callback(SegmentEvent::Segment(SegmentInfo::new(
+                no_ext,
+                None,
+                None,
                 segment_index,
-                // start_time: std::time::SystemTime::now(),
-                // end_time: std::time::SystemTime::now(),
-            }));
+            )));
         }
 
         // 根据退出码判断状态
