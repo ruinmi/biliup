@@ -23,7 +23,7 @@ use futures::stream::Inspect;
 use ormlite::Insert;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::pin;
 use tracing::{error, info};
 
@@ -192,26 +192,44 @@ where
             .first()
             .cloned()
             .unwrap_or_else(|| event.prev_file_path.clone());
-        match upload_single_file(&upload_path, context).await {
-            Ok(video) => {
-                uploaded.videos.push(video);
-                let index = uploaded.segments.len() + 1;
-                uploaded.segments.push(PostprocessorSegment::from_event(
-                    &event,
-                    &upload_path,
-                    index,
-                ));
-                // 1.0.7 的 FileInfo(video, danmaku) 语义：上传完成后的 postprocessor
-                // 继续接收本段视频路径和对应弹幕路径。segment_processor 可能已把
-                // 首个视频路径原地替换（例如 Remux .ts→.mp4），因此这里保留转换后的路径集。
-                uploaded.paths.extend(paths);
+        let mut result = None;
+        for attempt in 1..=3 {
+            match upload_single_file(&upload_path, context).await {
+                Ok(video) => {
+                    result = Some(video);
+                    break;
+                }
+                Err(e) if attempt < 3 => {
+                    error!(
+                        file = ?upload_path,
+                        attempt,
+                        "upload_single_file failed, retrying: {:?}",
+                        e
+                    );
+                    tokio::time::sleep(Duration::from_secs(5 * attempt as u64)).await;
+                }
+                Err(e) => {
+                    error!(
+                        file = ?upload_path,
+                        "upload_single_file failed after retries, skipping segment: {:?}",
+                        e
+                    );
+                }
             }
-            Err(e) => {
-                error!(
-                    file = ?upload_path,
-                    "upload_single_file failed, skipping segment: {:?}", e
-                );
-            }
+        }
+
+        if let Some(video) = result {
+            uploaded.videos.push(video);
+            let index = uploaded.segments.len() + 1;
+            uploaded.segments.push(PostprocessorSegment::from_event(
+                &event,
+                &upload_path,
+                index,
+            ));
+            // 1.0.7 的 FileInfo(video, danmaku) 语义：上传完成后的 postprocessor
+            // 继续接收本段视频路径和对应弹幕路径。segment_processor 可能已把
+            // 首个视频路径原地替换（例如 Remux .ts→.mp4），因此这里保留转换后的路径集。
+            uploaded.paths.extend(paths);
         }
     }
 
@@ -339,11 +357,20 @@ pub(crate) async fn build_studio(
         )
         .build();
     // 处理封面上传
-    if !studio.cover.is_empty()
-        && let Ok(c) = &std::fs::read(&studio.cover).inspect_err(|e| error!(e=?e))
-        && let Ok(url) = bilibili.cover_up(c).await.inspect_err(|e| error!(e=?e))
-    {
-        studio.cover = url;
+    if !studio.cover.is_empty() {
+        match std::fs::read(&studio.cover) {
+            Ok(c) => match bilibili.cover_up(&c).await {
+                Ok(url) => studio.cover = url,
+                Err(e) => {
+                    error!(e = ?e, "cover upload failed; submitting without custom cover");
+                    studio.cover.clear();
+                }
+            },
+            Err(e) => {
+                error!(e = ?e, cover = ?studio.cover, "cover file unavailable; submitting without custom cover");
+                studio.cover.clear();
+            }
+        }
     };
 
     Ok(studio)
