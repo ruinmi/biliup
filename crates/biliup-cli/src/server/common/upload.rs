@@ -359,13 +359,31 @@ pub(crate) async fn build_studio(
     // 处理封面上传
     if !studio.cover.is_empty() {
         match std::fs::read(&studio.cover) {
-            Ok(c) => match bilibili.cover_up(&c).await {
-                Ok(url) => studio.cover = url,
-                Err(e) => {
-                    error!(e = ?e, "cover upload failed; submitting without custom cover");
-                    studio.cover.clear();
+            Ok(c) => {
+                for attempt in 1..=3 {
+                    match bilibili.cover_up(&c).await {
+                        Ok(url) => {
+                            studio.cover = url;
+                            break;
+                        }
+                        Err(e) if attempt < 3 => {
+                            error!(
+                                e = ?e,
+                                attempt,
+                                "cover upload failed, retrying"
+                            );
+                            tokio::time::sleep(Duration::from_secs(5 * attempt as u64)).await;
+                        }
+                        Err(e) => {
+                            error!(
+                                e = ?e,
+                                "cover upload failed after retries; submitting without custom cover"
+                            );
+                            studio.cover.clear();
+                        }
+                    }
                 }
-            },
+            }
             Err(e) => {
                 error!(e = ?e, cover = ?studio.cover, "cover file unavailable; submitting without custom cover");
                 studio.cover.clear();
