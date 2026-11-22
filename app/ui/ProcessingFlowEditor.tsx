@@ -16,9 +16,9 @@ export const FLOW_NODES: Record<FlowNode, { title: string; description: string; 
   start: { title: '直播开始', description: '设置录播备注、直播链接和文件名模板。', icon: <IconPlayCircle /> },
   download: { title: '下载', description: '设置下载器、保存后缀、录制时间范围、不录制关键词与 ffmpeg 参数。', icon: <IconDownloadStroked /> },
   upload: { title: '上传', description: '为这个直播间选择投稿模板，分段上传后统一投稿。', icon: <IconCloudUploadStroked /> },
-  preprocessor: { title: '下载前处理', description: '下载直播前触发，按顺序执行 run 命令。', icon: <IconCodeStroked /> },
+  preprocessor: { title: '下载前处理', description: '下载直播前触发，将主播信息 JSON 传给脚本或 webhook。', icon: <IconCodeStroked /> },
   segment_processor: { title: '分段时后处理', description: '每个分段上传前触发，按顺序执行操作。弹幕与遮挡可在同一个 render 步骤中完成。', icon: <IconFlowChartStroked /> },
-  downloaded_processor: { title: '下载后处理', description: '整场下载和分段处理完成后执行一次，接收实际文件列表；配置后普通录制将等待此步骤完成再上传。', icon: <IconCodeStroked /> },
+  downloaded_processor: { title: '下载后处理', description: '整场录制结束后执行。普通录制在上传前运行文件处理脚本，上传分段后、投稿前调用 webhook。', icon: <IconCodeStroked /> },
   postprocessor: { title: '后处理', description: '上传、投稿成功后处理视频文件；未配置上传时，在分段处理成功后执行。默认 rm 删除文件，mv 将文件移动到指定目录。', icon: <IconCheckCircleStroked /> },
 }
 export const isInnerNode = (node: FlowNode) => node === 'download' || node === 'segment_processor' || node === 'upload'
@@ -206,7 +206,9 @@ export function ProcessingFlowEditor({ value = {}, onChange, disabled, stage: ke
         </div>
       </div>
       <p id={`${labelId}-${index}-help`} className={styles.commandHelp}>
-        {COMMANDS[step.cmd || '']?.description}
+        {step.cmd === 'webhook' && key !== 'postprocessor'
+          ? (key === 'preprocessor' ? '录制开始前 POST 主播信息 JSON。' : '普通录制在视频分段上传完成后、投稿前 POST 主播信息 JSON。')
+          : COMMANDS[step.cmd || '']?.description}
         {step.cmd === 'run' && (key === 'segment_processor' || key === 'postprocessor') && ' 视频文件路径作为标准输入传入。'}
       </p>
       {step.cmd === 'run' && key === 'downloaded_processor' && <label>

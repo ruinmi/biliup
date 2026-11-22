@@ -40,6 +40,77 @@ fn payload(ctx: &Context, caught_error: Option<&str>) -> AppResult<Value> {
     Ok(json!({ "stream_info": info, "caught_error": caught_error.unwrap_or("") }))
 }
 
+fn client() -> AppResult<reqwest::Client> {
+    Ok(reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .change_context(AppError::Unknown)?)
+}
+
+async fn post(
+    client: &reqwest::Client,
+    endpoint: &str,
+    body: &Value,
+) -> AppResult<reqwest::Response> {
+    let url = reqwest::Url::parse(endpoint.trim())
+        .map_err(|_| AppError::Custom("webhook 地址无效".into()))?;
+    if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
+        return Err(AppError::Custom("webhook 仅支持 HTTP 或 HTTPS 地址".into()).into());
+    }
+    let response = client
+        .post(url)
+        .json(body)
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)
+        .change_context(AppError::Custom("webhook 请求失败，保留文件".into()))?;
+    if !response.status().is_success() {
+        return Err(
+            AppError::Custom(format!("webhook 返回 HTTP {}，保留文件", response.status())).into(),
+        );
+    }
+    Ok(response)
+}
+
+/// Recording hooks use the original StreamerInfo JSON and accept any HTTP 2xx.
+pub(crate) async fn send_streamer_info(endpoint: &str, src: &[u8]) -> AppResult<()> {
+    let body = serde_json::from_slice(src).change_context(AppError::Unknown)?;
+    post(&client()?, endpoint, &body).await?;
+    Ok(())
+}
+
+pub(crate) async fn before_submit(ctx: &Context) {
+    let Some(steps) = &ctx.live_streamer().downloaded_processor else {
+        return;
+    };
+    let hooks: Vec<_> = steps
+        .iter()
+        .filter_map(|step| match step {
+            HookStep::Webhook { webhook } => Some(webhook.as_str()),
+            _ => None,
+        })
+        .collect();
+    if hooks.is_empty() {
+        return;
+    }
+    let result = async {
+        let body = serde_json::to_value(ctx.streamer_info()).change_context(AppError::Unknown)?;
+        let client = client()?;
+        for endpoint in hooks {
+            if let Err(error) = post(&client, endpoint, &body).await {
+                tracing::warn!(%error, "投稿前 webhook 回调失败");
+            }
+        }
+        Ok::<_, error_stack::Report<AppError>>(())
+    }
+    .await;
+    if let Err(error) = result {
+        tracing::warn!(%error, "无法准备投稿前 webhook");
+    }
+}
+
 pub async fn notify(ctx: &Context, caught_error: Option<&str>) -> AppResult<()> {
     let hooks: Vec<_> = ctx
         .live_streamer()
@@ -58,32 +129,9 @@ pub async fn notify(ctx: &Context, caught_error: Option<&str>) -> AppResult<()> 
         return Ok(());
     }
     let body = payload(ctx, caught_error)?;
-    let client = reqwest::Client::builder()
-        .connect_timeout(Duration::from_secs(10))
-        .timeout(Duration::from_secs(30))
-        .redirect(reqwest::redirect::Policy::none())
-        .build()
-        .change_context(AppError::Unknown)?;
+    let client = client()?;
     for endpoint in hooks {
-        let url = reqwest::Url::parse(endpoint.trim())
-            .map_err(|_| AppError::Custom("webhook 地址无效".into()))?;
-        if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none() {
-            return Err(AppError::Custom("webhook 仅支持 HTTP 或 HTTPS 地址".into()).into());
-        }
-        let mut response = client
-            .post(url)
-            .json(&body)
-            .send()
-            .await
-            .map_err(reqwest::Error::without_url)
-            .change_context(AppError::Custom("webhook 请求失败，保留文件".into()))?;
-        if !response.status().is_success() {
-            return Err(AppError::Custom(format!(
-                "webhook 返回 HTTP {}，保留文件",
-                response.status()
-            ))
-            .into());
-        }
+        let mut response = post(&client, endpoint, &body).await?;
         // Only a tiny acknowledgement is expected; never buffer an unbounded response.
         let mut answer = Vec::new();
         while let Some(chunk) = response
@@ -130,17 +178,28 @@ mod tests {
     use tokio::sync::mpsc;
 
     async fn context(endpoint: &str) -> Context {
+        context_with_recording_hooks(endpoint, false).await
+    }
+
+    async fn context_with_recording_hooks(
+        endpoint: &str,
+        include_recording_hooks: bool,
+    ) -> Context {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect("sqlite::memory:")
             .await
             .unwrap();
         sqlx::migrate!("./migrations").run(&pool).await.unwrap();
-        let room = serde_json::from_value(json!({
+        let mut room = json!({
             "id": 1, "url": "https://example.invalid/live", "remark": "录播备注",
             "postprocessor": ["rm", {"webhook": endpoint}]
-        }))
-        .unwrap();
+        });
+        if include_recording_hooks {
+            room["preprocessor"] = json!([{"webhook": endpoint}]);
+            room["downloaded_processor"] = json!([{"webhook": endpoint}]);
+        }
+        let room = serde_json::from_value(room).unwrap();
         let template = serde_json::from_value(json!({
             "id": 2, "template_name": "测试模板", "title": "投稿 {title}",
             "description": "来自 {streamer}", "tags": ["录播"], "tid": 171,
@@ -195,6 +254,24 @@ mod tests {
             matches!(&steps[0], HookStep::Webhook { webhook } if webhook == "http://localhost/hook")
         );
         assert_eq!(serde_json::to_value(steps).unwrap(), config);
+    }
+
+    #[tokio::test]
+    async fn recording_webhooks_keep_the_streamer_payload_and_do_not_defer_uploads() {
+        let (url, mut messages, server) =
+            receiver(StatusCode::OK, r#"{"ok":true}"#.into(), PathBuf::new()).await;
+        let ctx = context_with_recording_hooks(&url, true).await;
+        let expected = serde_json::to_value(ctx.streamer_info()).unwrap();
+        let input = serde_json::to_vec(&expected).unwrap();
+        let pre = &ctx.live_streamer().preprocessor.as_ref().unwrap()[0];
+        pre.execute_with(&input).await.unwrap();
+        assert_eq!(messages.try_recv().unwrap().0, expected);
+
+        assert!(!crate::server::common::downloaded::configured(&ctx));
+        super::before_submit(&ctx).await;
+        assert_eq!(messages.try_recv().unwrap().0, expected);
+        assert!(messages.try_recv().is_err());
+        server.abort();
     }
 
     #[tokio::test]

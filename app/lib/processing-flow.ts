@@ -1,9 +1,9 @@
 import { formListToHookStep, hookStepListToForm, type PostprocessorFormStep } from './postprocessor'
 
 export const PROCESSING_STAGES = [
-  { key: 'preprocessor', title: '下载前处理', commands: ['run'] },
+  { key: 'preprocessor', title: '下载前处理', commands: ['run', 'webhook'] },
   { key: 'segment_processor', title: '分段时后处理', commands: ['run', 'remux', 'render'] },
-  { key: 'downloaded_processor', title: '下载后处理', commands: ['run'] },
+  { key: 'downloaded_processor', title: '下载后处理', commands: ['run', 'webhook'] },
   { key: 'postprocessor', title: '后处理', commands: ['run', 'mv', 'rm', 'webhook'] },
 ] as const
 export type ProcessingStage = typeof PROCESSING_STAGES[number]['key']

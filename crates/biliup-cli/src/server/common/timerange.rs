@@ -11,7 +11,7 @@
 //! 08:00–12:00，整整错开 8 小时。
 
 use crate::server::common::util::parse_segment_time;
-use chrono::{DateTime, NaiveDateTime, Timelike, Utc};
+use chrono::{DateTime, Local, NaiveDateTime, NaiveTime, Timelike, Utc};
 use tracing::debug;
 
 const SECONDS_PER_DAY: u32 = 24 * 60 * 60;
@@ -27,6 +27,25 @@ pub struct TimeRange {
 impl TimeRange {
     /// 解析存储的 `time_range` 字符串，任何形式的非法输入都返回 `None`。
     pub fn parse(raw: &str) -> Option<Self> {
+        let raw = raw.trim();
+        // Older personal configurations also accepted a local-clock window.
+        if !raw.starts_with('[') {
+            let (start, end) = raw.split_once('-')?;
+            let local_offset = Local::now().offset().local_minus_utc();
+            let to_utc = |clock: &str| {
+                let time = NaiveTime::parse_from_str(clock.trim(), "%H:%M:%S")
+                    .or_else(|_| NaiveTime::parse_from_str(clock.trim(), "%H:%M"))
+                    .ok()?;
+                Some(
+                    (time.num_seconds_from_midnight() as i32 - local_offset)
+                        .rem_euclid(SECONDS_PER_DAY as i32) as u32,
+                )
+            };
+            return Some(Self {
+                start: to_utc(start)?,
+                end: to_utc(end)?,
+            });
+        }
         let bounds: Vec<String> = serde_json::from_str(raw)
             .inspect_err(|e| debug!(raw = raw, error = %e, "time_range 不是字符串数组，忽略"))
             .ok()?;

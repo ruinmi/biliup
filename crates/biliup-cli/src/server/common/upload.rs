@@ -10,7 +10,7 @@ use crate::server::errors::{AppError, AppResult};
 use crate::server::infrastructure::context::{Context, Stage, WorkerStatus};
 use crate::server::infrastructure::models::InsertFileItem;
 use crate::server::infrastructure::models::hook_step::{
-    HookStep, process_video, process_video_paths_with_source,
+    HookStep, process_video, process_video_paths_with_source, process_video_with_env,
 };
 use crate::server::infrastructure::models::upload_streamer::UploadStreamer;
 use crate::server::workbench::retention::Retention;
@@ -28,10 +28,11 @@ use futures::Stream;
 use futures::StreamExt;
 use futures::stream::Inspect;
 use ormlite::Insert;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::pin;
 use tokio::task::{JoinError, JoinSet};
 use tracing::{error, info, warn};
@@ -49,6 +50,37 @@ pub(crate) struct UploadContext {
 pub(crate) struct UploadedVideos {
     pub(crate) videos: Vec<Video>,
     pub(crate) paths: Vec<PathBuf>,
+    segments: Vec<PostprocessorSegment>,
+}
+
+#[derive(Clone, Copy, Default)]
+struct SegmentTimes {
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
+}
+
+impl SegmentTimes {
+    fn read(path: &Path) -> Self {
+        let Ok(metadata) = std::fs::metadata(path) else {
+            return Self::default();
+        };
+        Self {
+            start_ts: metadata.created().ok().and_then(unix_seconds),
+            end_ts: metadata.modified().ok().and_then(unix_seconds),
+        }
+    }
+}
+
+fn unix_seconds(time: SystemTime) -> Option<i64> {
+    i64::try_from(time.duration_since(UNIX_EPOCH).ok()?.as_secs()).ok()
+}
+
+#[derive(serde::Serialize)]
+struct PostprocessorSegment {
+    path: String,
+    index: usize,
+    start_ts: Option<i64>,
+    end_ts: Option<i64>,
 }
 
 pub async fn process_with_upload<F>(
@@ -66,16 +98,16 @@ where
         }
         return plan.run(rx, ctx, upload_config).await;
     }
-    let paths =
+    let uploaded =
         super::webhook::on_failure(ctx, upload_and_submit(rx, ctx, upload_config).await).await?;
-    execute_postprocessor(paths, ctx).await
+    postprocess(uploaded.paths, &uploaded.segments, ctx).await
 }
 
 async fn upload_and_submit<F>(
     rx: Inspect<Receiver<SegmentInfo>, F>,
     ctx: &Context,
     upload_config: &UploadStreamer,
-) -> AppResult<Vec<PathBuf>>
+) -> AppResult<UploadedVideos>
 where
     F: FnMut(&SegmentInfo),
 {
@@ -100,7 +132,7 @@ where
         .segment_processor
         .clone()
         .unwrap_or_default();
-    let uploaded_videos = pipeline_upload_videos(rx, &segment_processors, ctx, |path| {
+    let mut uploaded_videos = pipeline_upload_videos(rx, &segment_processors, ctx, |path| {
         let upload_context = &upload_context;
         async move {
             let context = upload_context
@@ -116,6 +148,7 @@ where
 
     // 4. 提交到B站
     if !uploaded_videos.videos.is_empty() {
+        super::webhook::before_submit(ctx).await;
         let upload_context = upload_context
             .get()
             .expect("uploaded files have an upload context");
@@ -125,7 +158,7 @@ where
         let studio = build_studio(
             &upload_config,
             &upload_context.bilibili,
-            uploaded_videos.videos,
+            std::mem::take(&mut uploaded_videos.videos),
             &recorder,
         )
         .await?;
@@ -138,7 +171,7 @@ where
         return Err(AppError::Custom("没有一个分段上传成功".into()).into());
     }
 
-    Ok(uploaded_videos.paths)
+    Ok(uploaded_videos)
 }
 
 async fn process_without_upload<F>(
@@ -161,7 +194,8 @@ where
     )
     .await;
     let processed = super::webhook::on_failure(ctx, processed).await?;
-    execute_postprocessor(processed.paths, ctx).await
+    super::webhook::before_submit(ctx).await;
+    postprocess(processed.paths, &processed.segments, ctx).await
 }
 
 pub(crate) async fn initialize_upload_context(
@@ -332,6 +366,7 @@ where
     let mut uploaded = UploadedVideos::default();
     let deferred = super::downloaded::configured(ctx);
     let mut prepared = Vec::new();
+    let mut prepared_times = HashMap::new();
     pin!(rx);
     // 流式处理后续事件
     while let Some(mut event) = rx.next().await {
@@ -388,6 +423,7 @@ where
             continue;
         }
         let original = event.prev_file_path.clone();
+        let times = SegmentTimes::read(&original);
         let mut paths = segment_paths(&event);
         let source = if steps.iter().any(|s| matches!(s, HookStep::Render { .. })) {
             let row =
@@ -490,9 +526,11 @@ where
         }
 
         if deferred {
-            prepared.push(super::downloaded::HookFile::from_paths(paths));
+            let file = super::downloaded::HookFile::from_paths(paths);
+            prepared_times.insert(file.video.clone(), times);
+            prepared.push(file);
         } else {
-            upload_prepared(paths, &upload, &mut uploaded).await;
+            upload_prepared(paths, times, &upload, &mut uploaded).await;
         }
         if let Some(task) = TaskObservation::current() {
             task.phase("waiting_segment");
@@ -505,14 +543,55 @@ where
         // ownership from positions in the returned list; preserve indexed sources.
         // Native remux/render already updates exact source mappings above.
         for file in prepared {
-            upload_prepared(file.paths(), &upload, &mut uploaded).await;
+            let times = prepared_times.remove(&file.video).unwrap_or_default();
+            upload_prepared(file.paths(), times, &upload, &mut uploaded).await;
         }
     }
     Ok(uploaded)
 }
 
-async fn upload_prepared<U, Fut>(paths: Vec<PathBuf>, upload: &U, uploaded: &mut UploadedVideos)
-where
+#[cfg(test)]
+#[tokio::test]
+async fn postprocessor_segments_include_only_successful_files_with_original_times() {
+    use serde_json::json;
+
+    let dir = tempfile::tempdir().unwrap();
+    let failed = dir.path().join("failed.mkv");
+    let uploaded_path = dir.path().join("uploaded.mkv");
+    let times = SegmentTimes {
+        start_ts: Some(123),
+        end_ts: Some(456),
+    };
+    let upload = |path: PathBuf| {
+        let failed = failed.clone();
+        async move {
+            if path == failed {
+                return Err(AppError::Custom("upload failed".into()).into());
+            }
+            Ok(Video::new("test"))
+        }
+    };
+    let mut result = UploadedVideos::default();
+    upload_prepared(vec![failed.clone()], times, &upload, &mut result).await;
+    upload_prepared(vec![uploaded_path.clone()], times, &upload, &mut result).await;
+    assert_eq!(result.paths, vec![uploaded_path.clone()]);
+    assert_eq!(
+        serde_json::to_value(result.segments).unwrap(),
+        json!([{
+            "path": uploaded_path.to_string_lossy(),
+            "index": 1,
+            "start_ts": 123,
+            "end_ts": 456,
+        }])
+    );
+}
+
+async fn upload_prepared<U, Fut>(
+    paths: Vec<PathBuf>,
+    times: SegmentTimes,
+    upload: &U,
+    uploaded: &mut UploadedVideos,
+) where
     U: Fn(PathBuf) -> Fut,
     Fut: Future<Output = AppResult<Video>>,
 {
@@ -524,6 +603,12 @@ where
     match upload(path.clone()).await {
         Ok(video) => {
             uploaded.videos.push(video);
+            uploaded.segments.push(PostprocessorSegment {
+                path: path.to_string_lossy().into_owned(),
+                index: uploaded.videos.len(),
+                start_ts: times.start_ts,
+                end_ts: times.end_ts,
+            });
             uploaded.paths.extend(paths);
         }
         Err(error) => error!(?path, ?error, "upload_single_file failed, skipping segment"),
@@ -610,7 +695,7 @@ pub(crate) async fn upload_single_file_with_progress(
     context: &UploadContext,
     progress: impl Fn(usize) -> bool + Send + Sync,
 ) -> AppResult<Video> {
-    upload_observed_file(file_path,context,progress,true).await
+    upload_observed_file(file_path, context, progress, true).await
 }
 
 /// Completed renders already have their final audio; uploading must not rewrite that artifact.
@@ -619,7 +704,7 @@ pub(crate) async fn upload_prepared_file_with_progress(
     context: &UploadContext,
     progress: impl Fn(usize) -> bool + Send + Sync,
 ) -> AppResult<Video> {
-    upload_observed_file(file_path,context,progress,false).await
+    upload_observed_file(file_path, context, progress, false).await
 }
 async fn upload_observed_file(
     file_path: &Path,
@@ -636,7 +721,14 @@ async fn upload_observed_file(
                 .map(|metadata| metadata.len()),
         )
     });
-    let result = upload_file_inner(file_path, context, &progress, observation.as_ref(),repair_audio).await;
+    let result = upload_file_inner(
+        file_path,
+        context,
+        &progress,
+        observation.as_ref(),
+        repair_audio,
+    )
+    .await;
     if let Some(observation) = observation {
         observation.finish(
             result
@@ -685,7 +777,9 @@ async fn upload_file_inner(
     if crate::server::common::processing::masking::is_unmasked(file_path) {
         return Err(AppError::Custom("未遮挡录像禁止上传，请先完成画面遮挡".into()).into());
     }
-    if repair_audio { prepare_upload_audio(file_path).await?; }
+    if repair_audio {
+        prepare_upload_audio(file_path).await?;
+    }
     let video_path = file_path;
     let UploadContext {
         bilibili,
@@ -1050,7 +1144,13 @@ pub(crate) async fn build_studio(
     // 究竟把封面写到了哪里。
     if !studio.cover.is_empty() {
         match std::fs::read(&studio.cover) {
-            Ok(bytes) => match bilibili.cover_up(&bytes).await {
+            Ok(bytes) => match biliup::retry_with_config(
+                || bilibili.cover_up(&bytes),
+                2,
+                None::<fn(&Kind) -> bool>,
+            )
+            .await
+            {
                 Ok(url) => studio.cover = url,
                 Err(e) => {
                     error!(e=?e, cover=%studio.cover, "封面上传失败，本次投稿改用 B 站默认封面");
@@ -1120,6 +1220,14 @@ pub(crate) fn studio_from_template(
 }
 
 pub async fn execute_postprocessor(video_paths: Vec<PathBuf>, ctx: &Context) -> AppResult<()> {
+    postprocess(video_paths, &[], ctx).await
+}
+
+async fn postprocess(
+    video_paths: Vec<PathBuf>,
+    segments: &[PostprocessorSegment],
+    ctx: &Context,
+) -> AppResult<()> {
     // Like the Python handler, callbacks gate all file operations, regardless
     // of their position in the postprocessor list (including after an rm).
     super::webhook::notify(ctx, None).await?;
@@ -1138,7 +1246,20 @@ pub async fn execute_postprocessor(video_paths: Vec<PathBuf>, ctx: &Context) -> 
         .collect();
     let paths: Vec<&Path> = video_paths.iter().map(|p| p.as_path()).collect();
     let retention = Retention::after_upload(ctx.pool().clone(), &ctx.config());
-    process_video(&paths, &processor, Some(&retention)).await?;
+    if !processor
+        .iter()
+        .any(|step| matches!(step, HookStep::Run { .. }))
+    {
+        return process_video(&paths, &processor, Some(&retention)).await;
+    }
+    let segments = serde_json::to_string(segments).change_context(AppError::Unknown)?;
+    process_video_with_env(
+        &paths,
+        &processor,
+        Some(&retention),
+        &[("BILIUP_SEGMENTS_JSON", &segments)],
+    )
+    .await?;
     Ok(())
 }
 
@@ -2053,7 +2174,11 @@ pub(crate) fn observe_context(
         .filter(|template| !template.is_noop_uploader());
     ctx.upload_observations().map(|registry| {
         registry.register(NewTask {
-            source: if template.is_some() { source } else { "processing" },
+            source: if template.is_some() {
+                source
+            } else {
+                "processing"
+            },
             scheduler_group: group,
             title: &ctx.streamer_info().title,
             streamer_name: Some(&ctx.live_streamer().remark),

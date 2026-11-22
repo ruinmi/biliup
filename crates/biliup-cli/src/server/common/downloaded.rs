@@ -50,7 +50,11 @@ pub(crate) fn configured(ctx: &Context) -> bool {
     ctx.live_streamer()
         .downloaded_processor
         .as_ref()
-        .is_some_and(|steps| !steps.is_empty())
+        .is_some_and(|steps| {
+            steps
+                .iter()
+                .any(|step| !matches!(step, HookStep::Webhook { .. }))
+        })
 }
 
 pub(crate) fn payload(files: &[HookFile], ctx: &Context) -> Vec<u8> {
@@ -94,6 +98,7 @@ pub(crate) async fn run(mut files: Vec<HookFile>, ctx: &Context) -> AppResult<Ve
         .unwrap_or_default()
     {
         let stdin = match step {
+            HookStep::Webhook { .. } => continue,
             HookStep::Run { json: true, .. } => payload(&files, ctx),
             HookStep::Run { .. } => files
                 .iter()

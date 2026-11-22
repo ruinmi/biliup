@@ -1060,7 +1060,10 @@ pub async fn start_download_workflow(
         }
     });
 
-    process(&[], &ctx.live_streamer().preprocessor).await;
+    match serde_json::to_vec(ctx.streamer_info()) {
+        Ok(stream_info) => process(&stream_info, &ctx.live_streamer().preprocessor).await,
+        Err(error) => warn!(%error, "无法序列化开录钩子的主播信息"),
+    }
 
     let _ = task.execute(&ctx, sender, downloader, rooms_handle).await;
 

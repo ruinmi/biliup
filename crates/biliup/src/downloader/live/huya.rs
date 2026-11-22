@@ -157,7 +157,10 @@ impl<'a> HuyaLive<'a> {
                     .unwrap_or_else(|| self.huya_protocol.extension().to_string()),
                 raw_stream_url,
                 platform: "huya".to_string(),
-                stream_headers: HashMap::new(),
+                stream_headers: HashMap::from([
+                    ("user-agent".to_owned(), HUYA_USER_AGENT.to_owned()),
+                    ("referer".to_owned(), self.url.clone()),
+                ]),
                 danmaku: self.danmaku_source(),
                 downloader_hint: DownloaderHint::StreamGears,
                 runtime_options: None,

@@ -117,7 +117,7 @@ function EditorPanels({ selected, onSelect, expanded, onExpandedChange, hooks, f
           <span className={`${styles.inspectorIcon} ${styles[selected] || ''}`} aria-hidden="true">{FLOW_NODES[selected].icon}</span>
           {FLOW_NODES[selected].title}
         </h2>
-        {selected === 'downloaded_processor' && <p>整场下载和分段处理完成后触发一次，接收实际文件列表；普通录制在此步骤完成后上传，边录边传仅在录制结束后执行。</p>}
+        {selected === 'downloaded_processor' && <p>整场录制和分段处理完成后执行。普通录制先运行文件处理脚本，再上传分段，最后在投稿前调用 webhook。</p>}
         {selected === 'postprocessor' && <p>{values.upload_streamers_id ? '全部分段上传、投稿成功后，处理视频文件。' : '未配置上传：全部分段处理成功后，处理视频文件。'}</p>}
       </header>
       {/* Keep every field registered so switching nodes never drops unsaved values. */}
