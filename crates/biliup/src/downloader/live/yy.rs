@@ -142,6 +142,19 @@ impl YYLive {
             return Ok(LiveStatus::Offline);
         };
 
+        // =========================================================================
+        // 拦截 YY 下发的纯音频或纯视频流（通常由断流重连引起）
+        // =========================================================================
+        if raw_stream_url.contains("audio-only=1") || raw_stream_url.contains("video-only=1") {
+            tracing::warn!(
+                url = %raw_stream_url, 
+                "YY 平台返回了纯音频或纯视频流，主动阻断下载，视为未开播"
+            );
+            // 直接返回未开播，biliup 会停止拉流，等待下一次轮询，不会产生任何废文件！
+            return Ok(LiveStatus::Offline);
+        }
+        // =========================================================================
+
         Ok(LiveStatus::Live {
             stream: Box::new(LiveStream {
                 name: self.name.clone(),
@@ -149,6 +162,7 @@ impl YYLive {
                 title: String::new(),
                 date: Utc::now(),
                 live_cover_url: String::new(),
+                avatar_url: None,
                 raw_stream_url: raw_stream_url.clone(),
                 platform: "yy".to_string(),
                 stream_headers: HashMap::new(),

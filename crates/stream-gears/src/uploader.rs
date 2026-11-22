@@ -1,12 +1,19 @@
 use biliup::uploader::bilibili::{Credit, ResponseData, Studio};
+use pyo3::exceptions::PyTypeError;
 use pyo3::prelude::*;
 use pyo3::pyclass;
+use pyo3::types::PyMapping;
 
-use biliup_cli::server::common;
-use biliup_cli::server::common::upload::submit_to_bilibili;
-use biliup_cli::server::errors::{AppError, AppResult};
+use crate::get_field;
+use biliup::client::StatelessClient;
+use biliup::error::Result as AppResult;
+use biliup::uploader::{
+    VideoFile,
+    credential::login_by_cookies,
+    line::{self, Line, Probe},
+};
 use bon::Builder;
-use error_stack::ResultExt;
+use futures::StreamExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -25,43 +32,66 @@ pub enum UploadLine {
     Cntx,
     Antx,
     Attx,
-    Bda,
     Txa,
     Alia,
+    Estx,
+    Akbd,
 }
 
-impl From<UploadLine> for biliup_cli::UploadLine {
-    fn from(val: UploadLine) -> Self {
-        use UploadLine as P;
-        use biliup_cli::UploadLine as C;
-        match val {
-            P::Bldsa => C::Bldsa,
-            P::Cnbldsa => C::Cnbldsa,
-            P::Andsa => C::Andsa,
-            P::Atdsa => C::Atdsa,
-            P::Bda2 => C::Bda2,
-            P::Cnbd => C::Cnbd,
-            P::Anbd => C::Anbd,
-            P::Atbd => C::Atbd,
-            P::Tx => C::Tx,
-            P::Cntx => C::Cntx,
-            P::Antx => C::Antx,
-            P::Attx => C::Attx,
-            P::Bda => C::Bda,
-            P::Txa => C::Txa,
-            P::Alia => C::Alia,
+impl UploadLine {
+    fn line(self) -> Line {
+        match self {
+            Self::Bldsa => line::bldsa(),
+            Self::Cnbldsa => line::cnbldsa(),
+            Self::Andsa => line::andsa(),
+            Self::Atdsa => line::atdsa(),
+            Self::Bda2 => line::bda2(),
+            Self::Cnbd => line::cnbd(),
+            Self::Anbd => line::anbd(),
+            Self::Atbd => line::atbd(),
+            Self::Tx => line::tx(),
+            Self::Cntx => line::cntx(),
+            Self::Antx => line::antx(),
+            Self::Attx => line::attx(),
+            Self::Txa => line::txa(),
+            Self::Alia => line::alia(),
+            Self::Estx => line::estx(),
+            Self::Akbd => line::akbd(),
         }
     }
 }
 
-#[derive(FromPyObject)]
+/// `desc_v2` 的元素：`{"type", "raw_text", "biz_id"}` 形式的 dict，
+/// 或带 `type_id` / `raw_text` / `biz_id` 属性的对象。`biz_id` 可省略。
 pub struct PyCredit {
-    #[pyo3(item("type"))]
     type_id: i8,
-    #[pyo3(item("raw_text"))]
     raw_text: String,
-    #[pyo3(item("biz_id"))]
     biz_id: Option<String>,
+}
+
+impl<'a, 'py> FromPyObject<'a, 'py> for PyCredit {
+    type Error = PyErr;
+
+    fn extract(obj: Borrowed<'a, 'py, PyAny>) -> PyResult<Self> {
+        let obj = obj.to_owned();
+        let type_key = if obj.cast::<PyMapping>().is_ok() {
+            "type"
+        } else {
+            "type_id"
+        };
+        let required = |key: &str| -> PyResult<Bound<'py, PyAny>> {
+            get_field(&obj, key)?
+                .ok_or_else(|| PyTypeError::new_err(format!("desc_v2 item is missing `{key}`")))
+        };
+        Ok(PyCredit {
+            type_id: required(type_key)?.extract()?,
+            raw_text: required("raw_text")?.extract()?,
+            biz_id: get_field(&obj, "biz_id")?
+                .map(|value| value.extract::<Option<String>>())
+                .transpose()?
+                .flatten(),
+        })
+    }
 }
 
 #[derive(Builder)]
@@ -72,6 +102,7 @@ pub struct StudioPre {
     limit: usize,
     title: String,
     tid: u16,
+    tid_v2: Option<u32>,
     tag: String,
     copyright: u8,
     source: String,
@@ -109,6 +140,7 @@ pub async fn upload(
         limit,
         title,
         tid,
+        tid_v2,
         tag,
         copyright,
         source,
@@ -127,14 +159,37 @@ pub async fn upload(
         extra_fields,
     } = studio_pre;
 
-    let (bilibili, videos) = common::upload::upload(
-        &cookie_file,
-        proxy,
-        line.map(Into::into),
-        video_path.as_slice(),
-        limit,
-    )
-    .await?;
+    let bilibili = login_by_cookies(&cookie_file, proxy)
+        .await
+        .map_err(|error| {
+            biliup::error::Kind::Custom(format!("cookies file {}: {error}", cookie_file.display()))
+        })?;
+    let client = StatelessClient::default();
+    let line = match line {
+        Some(line) => line.line(),
+        None => Probe::probe(&client.client).await.unwrap_or_else(|error| {
+            tracing::warn!(%error, "AUTO line probe failed; using default");
+            Line::default()
+        }),
+    };
+    let mut videos = Vec::with_capacity(video_path.len());
+    for path in video_path {
+        let parcel = line.pre_upload(&bilibili, VideoFile::new(&path)?).await?;
+        videos.push(
+            parcel
+                .upload(client.clone(), limit, |stream| {
+                    stream.map(|chunk| {
+                        chunk
+                            .map(|bytes| {
+                                let len = bytes.len();
+                                (bytes, len)
+                            })
+                            .map_err(Into::into)
+                    })
+                })
+                .await?,
+        );
+    }
 
     let mut desc_v2 = Vec::new();
     for credit in desc_v2_credit {
@@ -154,6 +209,7 @@ pub async fn upload(
         .source(source)
         .tag(tag)
         .tid(tid)
+        .maybe_tid_v2(tid_v2)
         .title(title)
         .videos(videos)
         .dolby(dolby)
@@ -168,17 +224,14 @@ pub async fn upload(
         .build();
 
     if !studio.cover.is_empty() {
-        let url = bilibili
-            .cover_up(
-                &std::fs::read(&studio.cover)
-                    .change_context_lazy(|| AppError::Unknown)
-                    .attach_with(|| format!("cover: {}", studio.cover))?,
-            )
-            .await
-            .change_context_lazy(|| AppError::Unknown)?;
+        let url = bilibili.cover_up(&std::fs::read(&studio.cover)?).await?;
         println!("{url}");
         studio.cover = url;
     }
 
-    submit_to_bilibili(&bilibili, &studio, submit).await
+    match submit.unwrap_or("web").to_ascii_lowercase().as_str() {
+        "app" => bilibili.submit_by_app(&studio, None).await,
+        "bcutandroid" => bilibili.submit_by_bcut_android(&studio, None).await,
+        _ => bilibili.submit_by_web(&studio, None).await,
+    }
 }

@@ -1,28 +1,22 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "bbup-app",
-  "version": "0.1.0",
-  "identifier": "com.tauri-app.app",
+  "productName": "biliup",
+  "version": "1.3.5",
+  "identifier": "com.biliup.desktop",
   "build": {
-    "beforeDevCommand": "npm run dev",
-    "devUrl": "http://localhost:1420",
-    "beforeBuildCommand": "npm run build",
-    "frontendDist": "../dist"
+    "frontendDist": "../static"
   },
   "app": {
-    "windows": [
-      {
-        "title": "bbup-app",
-        "width": 800,
-        "height": 600
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }
   },
   "bundle": {
     "active": true,
+    "resources": {
+      "../../crates/biliup-cli/assets/render-tools/": "render-tools/"
+    },
     "targets": "all",
     "icon": [
       "icons/32x32.png",
@@ -30,9 +24,6 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ],
-    "resources": [
-      "binaries/"
     ]
   }
 }

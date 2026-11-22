@@ -4,8 +4,10 @@
   align-items: center;
   background: rgb(var(--semi-grey-0));
   width: 100%;
-  height: 100vh;
-  overflow: hidden;
+  min-height: 100vh;
+  min-height: 100dvh;
+  overflow-x: hidden;
+  overflow-y: auto;
   font-family: "PingFang SC";
 
   .main {
@@ -13,6 +15,10 @@
     flex-basis: 0;
     flex-direction: column;
     flex-grow: 1;
+    min-height: 100vh;
+    min-height: 100dvh;
+    box-sizing: border-box;
+    flex-shrink: 0;
     align-items: center;
     align-self: stretch;
     justify-content: center;
@@ -33,6 +39,15 @@
       background: var(--semi-color-bg-0);
       padding: 48px 56px;
       row-gap: 30px;
+      // 卡片宽度以前由输入框的固定 440px 撑出来(440 + 56×2 = 552),窄于 552 的屏幕上两侧会被
+      // .frame 的 overflow: hidden 裁掉。改为卡片定宽 552 并允许收窄到视口宽度,输入框跟随卡片
+      width: 552px;
+      max-width: 100%;
+      box-sizing: border-box;
+
+      @media (max-width: 480px) {
+        padding: 32px 24px;
+      }
 
       .component66 {
         display: inline-flex;
@@ -96,7 +111,8 @@
           display: flex;
           flex-direction: column;
           flex-shrink: 0;
-          align-items: flex-start;
+          // 字段(.semi-form-field)撑满卡片内容区,输入框默认 width: 100% 随之铺满
+          align-items: stretch;
           align-self: stretch;
           justify-content: flex-start;
           row-gap: 24px;

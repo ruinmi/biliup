@@ -15,6 +15,7 @@ mod douyin;
 mod douyu;
 mod general;
 mod huya;
+mod huya_wup;
 mod inke;
 mod kilakila;
 mod kuaishou;
@@ -34,7 +35,10 @@ pub use bigo::Bigo;
 pub use bilibili::Bilibili;
 pub use cc::CC;
 pub use douyin::Douyin;
-pub use douyu::Douyu;
+pub use douyu::{
+    Douyu, DouyuCookieInput, DouyuCookieRefresh, DouyuLoginIdentity, DouyuRefreshClient,
+    DouyuRefreshError, strip_ws_expire_override,
+};
 pub use general::General;
 pub use huya::Huya;
 pub use inke::Inke;
@@ -74,6 +78,29 @@ pub trait LivePlugin: Send + Sync {
     fn name(&self) -> &'static str;
     fn matches(&self, url: &str) -> bool;
     async fn check_stream(&self, request: LiveRequest) -> LiveResult<LiveStatus>;
+
+    /// 是否支持批量直播检测。默认 false。
+    /// 支持的平台可用一次请求判定多个直播间的开播状态（对齐 Python `BatchCheck`），
+    /// 监控侧据此先批量过滤，未开播的房间跳过逐间检测。
+    fn supports_batch_check(&self) -> bool {
+        false
+    }
+
+    /// 批量检测：给定同平台的一批 URL，返回其中正在直播的 URL 子集。
+    /// 默认返回空（不支持批量检测的平台不应被调用到）。
+    async fn batch_check(&self, request: BatchCheckRequest) -> LiveResult<Vec<String>> {
+        let _ = request;
+        Ok(Vec::new())
+    }
+}
+
+/// 批量检测请求。承载同平台待检测的 URL 列表与所需的客户端 / 凭据 / 选项。
+#[derive(Debug, Clone)]
+pub struct BatchCheckRequest {
+    pub client: Client,
+    pub urls: Vec<String>,
+    pub options: LiveOptions,
+    pub credentials: LiveCredentials,
 }
 
 #[derive(Debug, Clone)]
@@ -169,7 +196,10 @@ impl Default for DouyinOptions {
 #[derive(Debug, Clone)]
 pub struct DouyuOptions {
     pub cdn: String,
+    pub force_hs: bool,
     pub rate: u32,
+    pub device_id: String,
+    pub codec: String,
     pub disable_interactive_game: bool,
     pub danmaku: bool,
 }
@@ -178,7 +208,10 @@ impl Default for DouyuOptions {
     fn default() -> Self {
         Self {
             cdn: "hw-h5".to_string(),
+            force_hs: false,
             rate: 0,
+            device_id: String::new(),
+            codec: String::new(),
             disable_interactive_game: false,
             danmaku: false,
         }
@@ -188,9 +221,11 @@ impl Default for DouyuOptions {
 #[derive(Debug, Clone)]
 pub struct HuyaOptions {
     pub cdn: String,
+    pub cdn_fallback: bool,
     pub max_ratio: u32,
     pub protocol: String,
     pub imgplus: bool,
+    pub mobile_api: bool,
     pub codec: String,
     pub danmaku: bool,
 }
@@ -199,9 +234,11 @@ impl Default for HuyaOptions {
     fn default() -> Self {
         Self {
             cdn: String::new(),
+            cdn_fallback: false,
             max_ratio: 0,
             protocol: "Flv".to_string(),
             imgplus: true,
+            mobile_api: false,
             codec: "264".to_string(),
             danmaku: false,
         }
@@ -277,11 +314,13 @@ impl Default for YoutubeOptions {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct LiveCredentials {
     pub bilibili_cookie: Option<String>,
     pub bilibili_cookie_file: Option<PathBuf>,
     pub douyin_cookie: Option<String>,
+    /// 斗鱼网页版登录 Cookie（请求头字符串或浏览器 JSON 导出）。部分房间的原画需要登录。
+    pub douyu_cookie: Option<String>,
     pub twitcasting_cookie: Option<String>,
     pub twitch_cookie: Option<String>,
     pub youtube_cookie: Option<PathBuf>,
@@ -291,6 +330,72 @@ pub struct LiveCredentials {
     pub niconico_password: Option<String>,
     pub niconico_user_session: Option<String>,
     pub niconico_purge_credentials: Option<String>,
+}
+
+/// Requests derive Debug for diagnostics. Report credential availability only,
+/// including cookie-file paths, so formatting a request cannot leak account data.
+impl std::fmt::Debug for LiveCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LiveCredentials")
+            .field("has_bilibili_cookie", &self.bilibili_cookie.is_some())
+            .field(
+                "has_bilibili_cookie_file",
+                &self.bilibili_cookie_file.is_some(),
+            )
+            .field("has_douyin_cookie", &self.douyin_cookie.is_some())
+            .field("has_douyu_cookie", &self.douyu_cookie.is_some())
+            .field("has_twitcasting_cookie", &self.twitcasting_cookie.is_some())
+            .field("has_twitch_cookie", &self.twitch_cookie.is_some())
+            .field("has_youtube_cookie", &self.youtube_cookie.is_some())
+            .field("has_afreecatv_username", &self.afreecatv_username.is_some())
+            .field("has_afreecatv_password", &self.afreecatv_password.is_some())
+            .field("has_niconico_email", &self.niconico_email.is_some())
+            .field("has_niconico_password", &self.niconico_password.is_some())
+            .field(
+                "has_niconico_user_session",
+                &self.niconico_user_session.is_some(),
+            )
+            .field(
+                "has_niconico_purge_credentials",
+                &self.niconico_purge_credentials.is_some(),
+            )
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod credential_debug_tests {
+    use super::LiveCredentials;
+    use std::path::PathBuf;
+
+    #[test]
+    fn request_credential_debug_never_contains_secret_values_or_file_paths() {
+        let secret = "fixture-private-credential";
+        let path = PathBuf::from("/fixture/private/cookie.json");
+        let credentials = LiveCredentials {
+            bilibili_cookie: Some(secret.into()),
+            bilibili_cookie_file: Some(path.clone()),
+            douyin_cookie: Some(secret.into()),
+            douyu_cookie: Some(format!("acf_auth={secret}; LTP0={secret}; dy_did={secret}")),
+            twitcasting_cookie: Some(secret.into()),
+            twitch_cookie: Some(secret.into()),
+            youtube_cookie: Some(path),
+            afreecatv_username: Some(secret.into()),
+            afreecatv_password: Some(secret.into()),
+            niconico_email: Some(secret.into()),
+            niconico_password: Some(secret.into()),
+            niconico_user_session: Some(secret.into()),
+            niconico_purge_credentials: Some(secret.into()),
+        };
+        for text in [format!("{credentials:?}"), format!("{credentials:#?}")] {
+            assert!(!text.contains(secret));
+            assert!(!text.contains("/fixture/private"));
+            assert!(!text.contains("acf_auth="));
+            assert!(!text.contains("LTP0="));
+            assert!(text.contains("has_douyu_cookie: true"));
+        }
+        assert!(format!("{:?}", LiveCredentials::default()).contains("has_douyu_cookie: false"));
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -306,6 +411,9 @@ pub struct LiveStream {
     pub title: String,
     pub date: DateTime<Utc>,
     pub live_cover_url: String,
+    /// 主播头像地址；平台响应里没有或尚未解析的平台为 `None`。
+    #[serde(default)]
+    pub avatar_url: Option<String>,
     pub raw_stream_url: String,
     pub platform: String,
     pub stream_headers: HashMap<String, String>,
